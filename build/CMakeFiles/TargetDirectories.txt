@@ -1,0 +1,3 @@
+C:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/build/CMakeFiles/WindowsInfoOverlay.dir
+C:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/build/CMakeFiles/edit_cache.dir
+C:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/build/CMakeFiles/rebuild_cache.dir
