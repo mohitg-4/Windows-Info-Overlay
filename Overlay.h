@@ -8,9 +8,21 @@
 #include <queue>
 #include <pdh.h> // Include PDH header for performance data
 #include <vector> // Include vector for CPU usage history
+#include <string>
+#include <shlobj.h>
 
 // Define a custom message for toggle
 #define WM_TOGGLE_OVERLAY (WM_USER + 1)
+
+// Structure to hold overlay configuration settings
+struct OverlaySettings 
+{
+    bool showCpuInfo = true;
+    bool showCpuTemperature = true;
+    bool showMemoryInfo = true;
+    bool showNetworkInfo = true;
+    bool saveToFile = false;
+};
 
 class Overlay
 {
@@ -73,6 +85,15 @@ private:
     std::vector<int> m_cpuUsageHistory;
     static constexpr size_t CPU_HISTORY_SIZE = 1000;
 
+    // Other member variables...
+    OverlaySettings m_settings;
+    bool m_showSettings = false;  // Toggle for settings panel
+
+    // Add these function prototypes to your Overlay class
+    void RenderSettingsPanel();
+    void SaveSettings();
+    void LoadSettings();
+    std::string GetSettingsFilePath();
 };
 
 // Global keyboard hook function

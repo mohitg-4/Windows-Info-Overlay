@@ -198,6 +198,9 @@ bool Overlay::Initialize()
         return false;
     }
 
+    // Load settings if available
+    LoadSettings();
+
     m_isRunning = true;
     return true;
 }
@@ -268,12 +271,9 @@ void Overlay::RenderOverlay()
 {
     ImGuiIO& io = ImGui::GetIO();
     
-    // Check for Enter key press within ImGui
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter))
-    {
-        Toggle();
-        return; // Exit early to prevent further rendering
-    }
+    // Store the mouse position at the start of the frame
+    static ImVec2 startDragPos;
+    static bool dragging = false;
     
     // First: Draw the system info window
     ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
@@ -281,56 +281,108 @@ void Overlay::RenderOverlay()
     ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowBgAlpha(0.9f);
     
-    ImGui::Begin("System Info Overlay", nullptr, 
+    // Set a minimum window width
+    ImGui::SetNextWindowSizeConstraints(ImVec2(350, 0), ImVec2(FLT_MAX, FLT_MAX));
+    
+    // Enable dragging with left mouse button while holding the Control key
+    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && io.MouseDown[0] && !dragging)
+    {
+        dragging = true;
+        startDragPos = io.MousePos;
+    }
+    
+    if (dragging && io.MouseDown[0])
+    {
+        ImVec2 currentPos = ImGui::GetWindowPos();
+        ImVec2 newPos = ImVec2(currentPos.x + io.MouseDelta.x, currentPos.y + io.MouseDelta.y);
+        ImGui::SetNextWindowPos(newPos);
+    }
+    else if (!io.MouseDown[0])
+    {
+        dragging = false;
+    }
+    
+    // Make the window title reflect that it's draggable with Ctrl
+    ImGui::Begin("System Info Overlay (Ctrl+Drag to move)", nullptr, 
         ImGuiWindowFlags_NoDecoration | 
-        ImGuiWindowFlags_AlwaysAutoResize | 
         ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoFocusOnAppearing);
     
-    // Add a draggable title bar at the top
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "System Information (Drag to move)");
-    ImGui::Separator();
-
-    // Test button 
-    if (ImGui::Button("Click Me To Test Input", ImVec2(-1, 0))) {
-        static bool clicked = false;
-        clicked = !clicked;
-        if (clicked) {
-            MessageBoxA(NULL, "Button clicked successfully!", "Click Test", MB_OK);
-        }
+    // Add a title header with no special drag functionality
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "System Information");
+    ImGui::SameLine(ImGui::GetWindowWidth() - 80);
+    
+    // Settings button
+    if (ImGui::Button("Settings"))
+    {
+        m_showSettings = !m_showSettings;
     }
     
     ImGui::Separator();
     
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "CPU INFO");
-    ImGui::Separator();
-    ImGui::Text("CPU Usage: %d%%", GetCPUUsage());
-    ImGui::Text("CPU Temperature: %d°C", GetCPUTemperature());
-    ImGui::Spacing();
+    // Store the window position and size to detect clicks
+    ImVec2 windowPos = ImGui::GetWindowPos();
+    ImVec2 windowSize = ImGui::GetWindowSize();
     
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "MEMORY INFO");
-    ImGui::Separator();
-    MEMORYSTATUSEX memInfo = GetMemoryInfo();
-    float usedMemoryGB = (float)(memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024 * 1024);
-    float totalMemoryGB = (float)memInfo.ullTotalPhys / (1024 * 1024 * 1024);
-    float memoryUsagePercent = (usedMemoryGB / totalMemoryGB) * 100.0f;
+    // Show settings panel if enabled
+    if (m_showSettings)
+    {
+        RenderSettingsPanel();
+        ImGui::Separator();
+    }
     
-    ImGui::Text("Memory Usage: %.1f GB / %.1f GB (%.1f%%)", 
-              usedMemoryGB, totalMemoryGB, memoryUsagePercent);
-    ImGui::ProgressBar(memoryUsagePercent / 100.0f, ImVec2(-1, 0), "");
-    ImGui::Spacing();
+    // More compact layout for system info sections
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));  // Slightly increased spacing
     
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "NETWORK INFO");
-    ImGui::Separator();
-    ImGui::Text("Download Speed: %.2f MB/s", GetNetworkDownloadSpeed());
-    ImGui::Text("Upload Speed: %.2f MB/s", GetNetworkUploadSpeed());
+    if (m_settings.showCpuInfo)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "CPU INFO");
+        ImGui::SameLine(ImGui::GetWindowWidth() - 120); // Position further left
+        ImGui::Text("%d%%", GetCPUUsage());
+        
+        if (m_settings.showCpuTemperature)
+        {
+            ImGui::Text("Temperature:");
+            ImGui::SameLine(120); // Increase from 100 to 120
+            ImGui::Text("%d°C", GetCPUTemperature());
+        }
+    }
+    
+    if (m_settings.showMemoryInfo)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "MEMORY");
+        MEMORYSTATUSEX memInfo = GetMemoryInfo();
+        float usedMemoryGB = (float)(memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024 * 1024);
+        float totalMemoryGB = (float)memInfo.ullTotalPhys / (1024 * 1024 * 1024);
+        float memoryUsagePercent = (usedMemoryGB / totalMemoryGB) * 100.0f;
+        
+        ImGui::Text("Usage:");
+        ImGui::SameLine(120); // Increase from 100 to 120
+        ImGui::Text("%.1f/%.1f GB", usedMemoryGB, totalMemoryGB);
+        
+        // Small, centered progress bar
+        float barWidth = 200.0f;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - barWidth) * 0.5f);
+        ImGui::ProgressBar(memoryUsagePercent / 100.0f, ImVec2(barWidth, 8), "");
+    }
+    
+    if (m_settings.showNetworkInfo)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "NETWORK");
+        ImGui::Text("Down:");
+        ImGui::SameLine(100);
+        ImGui::Text("%.2f MB/s", GetNetworkDownloadSpeed());
+        
+        ImGui::Text("Up:");
+        ImGui::SameLine(100);
+        ImGui::Text("%.2f MB/s", GetNetworkUploadSpeed());
+    }
+    
+    ImGui::PopStyleVar();  // Restore item spacing
     
     ImGui::End();
 
-    // Store if mouse was captured by any window above
-    bool mouseWasCaptured = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) && io.MousePos.x >= 0;
-    
-    // Draw background and click catcher only after we know if the mouse was captured
+    // Draw background
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y));
     ImGui::SetNextWindowBgAlpha(0.5f);
@@ -345,11 +397,78 @@ void Overlay::RenderOverlay()
     
     ImGui::End();
 
-    // Check for clicks outside UI elements
-    if (!mouseWasCaptured && ImGui::IsMouseClicked(0) && !IsClickedInFlowLauncher())
+    // Check if mouse click is inside the system info window
+    bool mouseInsideWindow = (io.MousePos.x >= windowPos.x && 
+                             io.MousePos.x <= windowPos.x + windowSize.x &&
+                             io.MousePos.y >= windowPos.y &&
+                             io.MousePos.y <= windowPos.y + windowSize.y);
+                             
+    // Only toggle OFF if click is outside the window AND not in Flow Launcher
+    if (ImGui::IsMouseClicked(0) && !mouseInsideWindow && !IsClickedInFlowLauncher())
     {
-        Toggle();
+        // Add a small delay to prevent immediate toggling
+        static DWORD lastClickTime = 0;
+        DWORD currentTime = GetTickCount();
+        
+        if (currentTime - lastClickTime > 200) { // 200ms debounce
+            Toggle();
+            lastClickTime = currentTime;
+        }
     }
+}
+
+void Overlay::RenderSettingsPanel()
+{
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 0.9f));
+    
+    // Use a more compact size and style for the settings panel
+    ImGui::BeginChild("SettingsPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 140), true);
+    
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "DISPLAY SETTINGS");
+    ImGui::Separator();
+    
+    // Use columns to make the settings more compact
+    ImGui::Columns(2, "SettingsColumns", false);
+    
+    // Left column
+    ImGui::Checkbox("CPU Info", &m_settings.showCpuInfo);
+    ImGui::Checkbox("Memory Info", &m_settings.showMemoryInfo);
+    
+    // Right column
+    ImGui::NextColumn();
+    ImGui::Checkbox("CPU Temperature", &m_settings.showCpuTemperature);
+    ImGui::Checkbox("Network Info", &m_settings.showNetworkInfo);
+    
+    // Reset columns
+    ImGui::Columns(1);
+    ImGui::Separator();
+    
+    // Save/Cancel buttons - put them on the same line
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 240) * 0.5f);  // Center the buttons
+    if (ImGui::Button("Save", ImVec2(100, 0)))
+    {
+        SaveSettings();
+        m_settings.saveToFile = true;
+        m_showSettings = false;
+    }
+    
+    ImGui::SameLine();
+    
+    if (ImGui::Button("Cancel", ImVec2(100, 0)))
+    {
+        if (m_settings.saveToFile)
+        {
+            LoadSettings();
+        }
+        else
+        {
+            m_settings = OverlaySettings{};
+        }
+        m_showSettings = false;
+    }
+    
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 void Overlay::Cleanup()
@@ -768,4 +887,48 @@ bool Overlay::IsClickedInFlowLauncher()
     }
     
     return false;
+}
+
+void Overlay::SaveSettings()
+{
+    std::string filePath = GetSettingsFilePath();
+    FILE* file = fopen(filePath.c_str(), "wb");
+    if (file)
+    {
+        fwrite(&m_settings, sizeof(OverlaySettings), 1, file);
+        fclose(file);
+    }
+}
+
+void Overlay::LoadSettings()
+{
+    std::string filePath = GetSettingsFilePath();
+    FILE* file = fopen(filePath.c_str(), "rb");
+    if (file)
+    {
+        fread(&m_settings, sizeof(OverlaySettings), 1, file);
+        fclose(file);
+    }
+    else
+    {
+        // No settings file exists yet, use defaults
+        m_settings = OverlaySettings{};
+    }
+}
+
+std::string Overlay::GetSettingsFilePath()
+{
+    char appDataPath[MAX_PATH];
+    SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appDataPath);
+    std::string path = std::string(appDataPath) + "\\WindowsInfoOverlay";
+    
+    // Create directory if it doesn't exist
+    if (CreateDirectoryA(path.c_str(), NULL) || 
+        GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        return path + "\\settings.dat";
+    }
+    
+    // Fallback to current directory if appdata isn't accessible
+    return "settings.dat";
 }
