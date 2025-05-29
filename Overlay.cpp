@@ -54,6 +54,19 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                 }
             }
         }
+        // Check for Enter key to close the overlay when it's visible
+        else if (kbStruct->vkCode == VK_RETURN)
+        {
+            if (wParam == WM_KEYDOWN)
+            {
+                // Send message to toggle off overlay if it's currently visible
+                if (g_overlayHwnd)
+                {
+                    // We'll use a different message specifically for hiding
+                    PostMessage(g_overlayHwnd, WM_TOGGLE_OVERLAY, 1, 0);
+                }
+            }
+        }
     }
     
     return CallNextHookEx(NULL, nCode, wParam, lParam);
@@ -74,7 +87,16 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             overlay = reinterpret_cast<Overlay*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
             if (overlay)
             {
-                overlay->Toggle();
+                // If wParam is 1, we're specifically hiding the overlay
+                if (wParam == 1 && overlay->m_isVisible)
+                {
+                    overlay->Toggle();
+                }
+                // Otherwise, it's a regular toggle
+                else if (wParam == 0)
+                {
+                    overlay->Toggle();
+                }
             }
             return 0;
         }
@@ -234,44 +256,52 @@ void Overlay::Toggle()
         SetWindowLong(m_hwnd, GWL_EXSTYLE, 
             (GetWindowLong(m_hwnd, GWL_EXSTYLE) | WS_EX_LAYERED) & ~WS_EX_TRANSPARENT);
     }
+    else
+    {
+        // When hidden, re-enable click-through
+        SetWindowLong(m_hwnd, GWL_EXSTYLE, 
+            GetWindowLong(m_hwnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+    }
 }
 
 void Overlay::RenderOverlay()
 {
     ImGuiIO& io = ImGui::GetIO();
     
-    // FIRST: Draw the full-screen dimming background
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y));
-    ImGui::SetNextWindowBgAlpha(0.5f);
+    // Check for Enter key press within ImGui
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter))
+    {
+        Toggle();
+        return; // Exit early to prevent further rendering
+    }
     
-    // Make the background window use ImGuiWindowFlags_NoInputs so clicks fall through it 
-    ImGui::Begin("##Overlay_Background", nullptr, 
-        ImGuiWindowFlags_NoDecoration | 
-        ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoInputs | // This prevents the background from capturing clicks
-        ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoFocusOnAppearing);
-    
-    ImGui::End();
-    
-    // SECOND: Draw the system info window that receives all clicks
+    // First: Draw the system info window
     ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    
+    ImGui::SetNextWindowPos(center, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowBgAlpha(0.9f);
     
     ImGui::Begin("System Info Overlay", nullptr, 
         ImGuiWindowFlags_NoDecoration | 
         ImGuiWindowFlags_AlwaysAutoResize | 
-        ImGuiWindowFlags_NoSavedSettings | 
+        ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoFocusOnAppearing);
-
-    // Store info window position and size for click detection
-    ImVec2 infoWindowPos = ImGui::GetWindowPos();
-    ImVec2 infoWindowSize = ImGui::GetWindowSize();
     
-    // Instead of using collapsing headers, let's use sections with titles
+    // Add a draggable title bar at the top
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "System Information (Drag to move)");
+    ImGui::Separator();
+
+    // Test button 
+    if (ImGui::Button("Click Me To Test Input", ImVec2(-1, 0))) {
+        static bool clicked = false;
+        clicked = !clicked;
+        if (clicked) {
+            MessageBoxA(NULL, "Button clicked successfully!", "Click Test", MB_OK);
+        }
+    }
+    
+    ImGui::Separator();
+    
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "CPU INFO");
     ImGui::Separator();
     ImGui::Text("CPU Usage: %d%%", GetCPUUsage());
@@ -296,36 +326,30 @@ void Overlay::RenderOverlay()
     ImGui::Text("Upload Speed: %.2f MB/s", GetNetworkUploadSpeed());
     
     ImGui::End();
+
+    // Store if mouse was captured by any window above
+    bool mouseWasCaptured = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) && io.MousePos.x >= 0;
     
-    // THIRD: Create a transparent full-screen window to capture clicks outside the info window
+    // Draw background and click catcher only after we know if the mouse was captured
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y));
-    ImGui::SetNextWindowBgAlpha(0.0f); // Fully transparent
+    ImGui::SetNextWindowBgAlpha(0.5f);
     
-    ImGui::Begin("##ClickCatcher", nullptr, 
+    ImGui::Begin("##Overlay_Background", nullptr, 
         ImGuiWindowFlags_NoDecoration | 
         ImGuiWindowFlags_NoNav |
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoBackground); // No background
-    
-    // Check for clicks outside the info window
-    if (ImGui::IsMouseClicked(0))
-    {
-        // Get info window position and size from above
-        ImVec2 mousePos = io.MousePos;
-        
-        // If click is outside info window and not in Flow Launcher, toggle off
-        if (!(mousePos.x >= infoWindowPos.x && mousePos.x <= (infoWindowPos.x + infoWindowSize.x) &&
-              mousePos.y >= infoWindowPos.y && mousePos.y <= (infoWindowPos.y + infoWindowSize.y)) 
-            && !IsClickedInFlowLauncher())
-        {
-            Toggle();
-        }
-    }
+        ImGuiWindowFlags_NoInputs);
     
     ImGui::End();
+
+    // Check for clicks outside UI elements
+    if (!mouseWasCaptured && ImGui::IsMouseClicked(0) && !IsClickedInFlowLauncher())
+    {
+        Toggle();
+    }
 }
 
 void Overlay::Cleanup()
