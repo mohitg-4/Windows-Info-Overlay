@@ -11,6 +11,12 @@
 #include <string>
 #include <shlobj.h>
 
+// Forward declare these COM interfaces to avoid including the full headers in the .h file
+// This is a cleaner approach that reduces compilation dependencies
+struct IMMDeviceEnumerator;
+struct IMMDevice;
+struct IAudioEndpointVolume;
+
 // Define a custom message for toggle
 #define WM_TOGGLE_OVERLAY (WM_USER + 1)
 
@@ -21,6 +27,7 @@ struct OverlaySettings
     bool showCpuTemperature = true;
     bool showMemoryInfo = true;
     bool showNetworkInfo = true;
+    bool showAudioControls = true;  // Add this line
     bool saveToFile = false;
 };
 
@@ -94,6 +101,22 @@ private:
     void SaveSettings();
     void LoadSettings();
     std::string GetSettingsFilePath();
+
+    // Audio control related variables and methods
+    IMMDeviceEnumerator* m_pEnumerator = nullptr;
+    IMMDevice* m_pDevice = nullptr;
+    IAudioEndpointVolume* m_pEndpointVolume = nullptr;
+    std::vector<std::pair<std::string, std::string>> m_audioDevices;
+    int m_selectedAudioDevice = 0;
+    
+    void InitializeAudio();
+    void CleanupAudio();
+    void RefreshAudioDevices();
+    void SetAudioDevice(int deviceIndex);
+    float GetMasterVolume();
+    void SetMasterVolume(float volume);
+    bool IsMasterMuted();
+    void SetMasterMuted(bool muted);
 };
 
 // Global keyboard hook function

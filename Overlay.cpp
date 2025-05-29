@@ -7,12 +7,20 @@
 #include <wbemidl.h>
 #include <comdef.h>
 #include <queue>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
+#include <functiondiscoverykeys_devpkey.h>
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "wbemuuid.lib")
+#pragma comment(lib, "Ole32.lib")
+
+// Define the property key manually for MinGW compatibility
+static const PROPERTYKEY PKEY_Device_FriendlyName_Custom = 
+{ { 0xa45c254e, 0xdf1c, 0x4efd, { 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0 } }, 14 };
 
 // Global variables for the keyboard hook
 HHOOK g_keyboardHook = NULL;
@@ -122,13 +130,34 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-Overlay::Overlay() : m_hwnd(nullptr), m_pd3dDevice(nullptr), m_pd3dDeviceContext(nullptr), 
-    m_pSwapChain(nullptr), m_mainRenderTargetView(nullptr), m_isRunning(false), m_isVisible(false),
-    m_lastInBytes(0), m_lastOutBytes(0), m_lastTickCount(0), m_downloadSpeed(0.0f), m_uploadSpeed(0.0f),
-    m_cpuQuery(NULL), m_cpuTotal(NULL), m_pdh_initialized(false), m_smoothedCpuUsage(0)
+Overlay::Overlay() : 
+    m_hwnd(nullptr), 
+    m_pd3dDevice(nullptr), 
+    m_pd3dDeviceContext(nullptr), 
+    m_pSwapChain(nullptr), 
+    m_mainRenderTargetView(nullptr), 
+    m_isRunning(false), 
+    m_isVisible(false),
+    m_lastInBytes(0), 
+    m_lastOutBytes(0), 
+    m_lastTickCount(0), 
+    m_downloadSpeed(0.0f), 
+    m_uploadSpeed(0.0f),
+    m_cpuQuery(NULL), 
+    m_cpuTotal(NULL), 
+    m_pdh_initialized(false), 
+    m_smoothedCpuUsage(0),
+    m_showSettings(false),
+    m_pEnumerator(nullptr),
+    m_pDevice(nullptr),
+    m_pEndpointVolume(nullptr),
+    m_selectedAudioDevice(0)
 {
     // Initialize PDH
     InitializeCpuCounter();
+    
+    // Initialize audio
+    InitializeAudio();
 }
 
 Overlay::~Overlay()
@@ -337,15 +366,18 @@ void Overlay::RenderOverlay()
     if (m_settings.showCpuInfo)
     {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "CPU INFO");
-        ImGui::SameLine(ImGui::GetWindowWidth() - 120); // Position further left
-        ImGui::Text("%d%%", GetCPUUsage());
         
+        // Put CPU usage on its own line
+        ImGui::Text("Usage: %d%%", GetCPUUsage());
+        
+        // CPU temperature on another line
         if (m_settings.showCpuTemperature)
         {
-            ImGui::Text("Temperature:");
-            ImGui::SameLine(120); // Increase from 100 to 120
-            ImGui::Text("%d°C", GetCPUTemperature());
+            ImGui::Text("Temperature: %d°C", GetCPUTemperature());
         }
+        
+        // Add a small spacing after the CPU section
+        ImGui::Spacing();
     }
     
     if (m_settings.showMemoryInfo)
@@ -376,6 +408,65 @@ void Overlay::RenderOverlay()
         ImGui::Text("Up:");
         ImGui::SameLine(100);
         ImGui::Text("%.2f MB/s", GetNetworkUploadSpeed());
+    }
+    
+    if (m_settings.showAudioControls)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "AUDIO");
+        
+        // Volume slider
+        float volume = GetMasterVolume();
+        bool muted = IsMasterMuted();
+        
+        // Mute button with icon
+        if (ImGui::Button(muted ? "🔇" : "🔊", ImVec2(25, 20)))
+        {
+            SetMasterMuted(!muted);
+        }
+        
+        ImGui::SameLine();
+        
+        // Volume slider
+        ImGui::PushItemWidth(ImGui::GetWindowWidth() - 50);
+        if (ImGui::SliderFloat("##Volume", &volume, 0.0f, 1.0f, ""))
+        {
+            SetMasterVolume(volume);
+        }
+        ImGui::PopItemWidth();
+        
+        // Show the percentage
+        ImGui::SameLine();
+        ImGui::Text("%d%%", static_cast<int>(volume * 100));
+        
+        // Audio device combo box
+        ImGui::Text("Device:");
+        ImGui::SameLine(100);
+        
+        ImGui::PushItemWidth(ImGui::GetWindowWidth() - 110);
+        if (ImGui::BeginCombo("##AudioDevice", m_audioDevices[m_selectedAudioDevice].first.c_str()))
+        {
+            for (int i = 0; i < m_audioDevices.size(); i++)
+            {
+                bool is_selected = (m_selectedAudioDevice == i);
+                if (ImGui::Selectable(m_audioDevices[i].first.c_str(), is_selected))
+                {
+                    SetAudioDevice(i);
+                }
+                if (is_selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopItemWidth();
+        
+        // Add a refresh button for audio devices
+        ImGui::SameLine();
+        if (ImGui::Button("↻"))
+        {
+            RefreshAudioDevices();
+        }
+        
+        ImGui::Spacing();
     }
     
     ImGui::PopStyleVar();  // Restore item spacing
@@ -439,6 +530,9 @@ void Overlay::RenderSettingsPanel()
     ImGui::Checkbox("CPU Temperature", &m_settings.showCpuTemperature);
     ImGui::Checkbox("Network Info", &m_settings.showNetworkInfo);
     
+    // Add audio controls checkbox (either column works)
+    ImGui::Checkbox("Audio Controls", &m_settings.showAudioControls);
+    
     // Reset columns
     ImGui::Columns(1);
     ImGui::Separator();
@@ -480,6 +574,9 @@ void Overlay::Cleanup()
         PdhCloseQuery(m_cpuQuery);
         m_pdh_initialized = false;
     }
+    
+    // Cleanup audio resources
+    CleanupAudio();
     
     // Unhook keyboard hook
     if (g_keyboardHook)
@@ -931,4 +1028,215 @@ std::string Overlay::GetSettingsFilePath()
     
     // Fallback to current directory if appdata isn't accessible
     return "settings.dat";
+}
+
+// Add these implementations at the end of your file
+
+void Overlay::InitializeAudio()
+{
+    // Initialize COM if not already initialized
+    HRESULT hr = CoInitialize(nullptr);
+    bool needsUninitialize = SUCCEEDED(hr);
+    
+    // Create device enumerator
+    hr = CoCreateInstance(
+        __uuidof(MMDeviceEnumerator),
+        nullptr,
+        CLSCTX_ALL,
+        __uuidof(IMMDeviceEnumerator),
+        (void**)&m_pEnumerator
+    );
+    
+    if (SUCCEEDED(hr))
+    {
+        RefreshAudioDevices();
+        // Set to default device initially
+        SetAudioDevice(0);
+    }
+    
+    if (needsUninitialize)
+    {
+        CoUninitialize();
+    }
+}
+
+void Overlay::CleanupAudio()
+{
+    if (m_pEndpointVolume)
+    {
+        m_pEndpointVolume->Release();
+        m_pEndpointVolume = nullptr;
+    }
+    
+    if (m_pDevice)
+    {
+        m_pDevice->Release();
+        m_pDevice = nullptr;
+    }
+    
+    if (m_pEnumerator)
+    {
+        m_pEnumerator->Release();
+        m_pEnumerator = nullptr;
+    }
+}
+
+void Overlay::RefreshAudioDevices()
+{
+    m_audioDevices.clear();
+    
+    if (!m_pEnumerator) return;
+    
+    // Add the default device at index 0
+    m_audioDevices.push_back(std::make_pair("Default Device", ""));
+    
+    // Enumerate all audio rendering devices
+    IMMDeviceCollection* pCollection = nullptr;
+    HRESULT hr = m_pEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &pCollection);
+    
+    if (SUCCEEDED(hr))
+    {
+        UINT count;
+        hr = pCollection->GetCount(&count);
+        
+        if (SUCCEEDED(hr))
+        {
+            for (UINT i = 0; i < count; i++)
+            {
+                IMMDevice* pDevice = nullptr;
+                hr = pCollection->Item(i, &pDevice);
+                
+                if (SUCCEEDED(hr))
+                {
+                    LPWSTR pwszID = nullptr;
+                    hr = pDevice->GetId(&pwszID);
+                    
+                    if (SUCCEEDED(hr))
+                    {
+                        // Convert LPWSTR to std::string
+                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pwszID, -1, nullptr, 0, nullptr, nullptr);
+                        std::string deviceId(size_needed, 0);
+                        WideCharToMultiByte(CP_UTF8, 0, pwszID, -1, &deviceId[0], size_needed, nullptr, nullptr);
+                        
+                        // Get device friendly name
+                        IPropertyStore* pProps = nullptr;
+                        hr = pDevice->OpenPropertyStore(STGM_READ, &pProps);
+                        
+                        if (SUCCEEDED(hr))
+                        {
+                            PROPVARIANT varName;
+                            PropVariantInit(&varName);
+                            
+                            hr = pProps->GetValue(PKEY_Device_FriendlyName_Custom, &varName);
+                            
+                            if (SUCCEEDED(hr))
+                            {
+                                // Convert LPWSTR to std::string
+                                int name_size = WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, nullptr, 0, nullptr, nullptr);
+                                std::string deviceName(name_size, 0);
+                                WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, &deviceName[0], name_size, nullptr, nullptr);
+                                
+                                m_audioDevices.push_back(std::make_pair(deviceName, deviceId));
+                                
+                                PropVariantClear(&varName);
+                            }
+                            
+                            pProps->Release();
+                        }
+                        
+                        CoTaskMemFree(pwszID);
+                    }
+                    
+                    pDevice->Release();
+                }
+            }
+        }
+        
+        pCollection->Release();
+    }
+}
+
+void Overlay::SetAudioDevice(int deviceIndex)
+{
+    // Clean up previous device and endpoint
+    if (m_pEndpointVolume)
+    {
+        m_pEndpointVolume->Release();
+        m_pEndpointVolume = nullptr;
+    }
+    
+    if (m_pDevice)
+    {
+        m_pDevice->Release();
+        m_pDevice = nullptr;
+    }
+    
+    if (!m_pEnumerator || deviceIndex < 0 || deviceIndex >= m_audioDevices.size())
+        return;
+    
+    m_selectedAudioDevice = deviceIndex;
+    HRESULT hr;
+    
+    // If default device (index 0), get the default device
+    if (deviceIndex == 0)
+    {
+        hr = m_pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &m_pDevice);
+    }
+    else
+    {
+        // Get device by ID
+        const std::string& deviceId = m_audioDevices[deviceIndex].second;
+        
+        // Convert std::string to LPWSTR
+        int size_needed = MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, nullptr, 0);
+        std::wstring wDeviceId(size_needed, 0);
+        MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, &wDeviceId[0], size_needed);
+        
+        hr = m_pEnumerator->GetDevice(wDeviceId.c_str(), &m_pDevice);
+    }
+    
+    if (SUCCEEDED(hr))
+    {
+        hr = m_pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&m_pEndpointVolume);
+    }
+}
+
+float Overlay::GetMasterVolume()
+{
+    float level = 0.0f;
+    
+    if (m_pEndpointVolume)
+    {
+        m_pEndpointVolume->GetMasterVolumeLevelScalar(&level);
+    }
+    
+    return level;
+}
+
+void Overlay::SetMasterVolume(float volume)
+{
+    if (m_pEndpointVolume)
+    {
+        m_pEndpointVolume->SetMasterVolumeLevelScalar(volume, nullptr);
+    }
+}
+
+bool Overlay::IsMasterMuted()
+{
+    BOOL muted = FALSE;
+    
+    if (m_pEndpointVolume)
+    {
+        m_pEndpointVolume->GetMute(&muted);
+    }
+    
+    return muted != FALSE;
+}
+
+void Overlay::SetMasterMuted(bool muted)
+{
+    if (m_pEndpointVolume)
+    {
+        m_pEndpointVolume->SetMute(muted, nullptr);
+    }
 }
