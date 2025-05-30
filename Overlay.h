@@ -21,14 +21,32 @@ struct IAudioEndpointVolume;
 #define WM_TOGGLE_OVERLAY (WM_USER + 1)
 
 // Structure to hold overlay configuration settings
+struct AudioSettings {
+    bool showVolumePercentage = true;
+    bool showDeviceSelector = true;
+    bool alwaysOnTop = false;
+    bool savePosition = true;
+};
+
+// Network settings struct (add to OverlaySettings or as a separate struct)
+struct NetworkSettings {
+    bool showNetworkDetails = true;
+    bool alwaysOnTop = false;
+    bool savePosition = true;
+};
+
+// Add to OverlaySettings
 struct OverlaySettings 
 {
     bool showCpuInfo = true;
     bool showCpuTemperature = true;
     bool showMemoryInfo = true;
     bool showNetworkInfo = true;
-    bool showAudioControls = true;  // Add this line
+    bool showAudioControls = true;
+    bool showBatteryInfo = true;
     bool saveToFile = false;
+    AudioSettings audioSettings;
+    NetworkSettings networkSettings; // Add this line
 };
 
 class Overlay
@@ -117,6 +135,76 @@ private:
     void SetMasterVolume(float volume);
     bool IsMasterMuted();
     void SetMasterMuted(bool muted);
+
+    // Battery info related functions
+    bool GetBatteryStatus(int& batteryPercent, bool& isCharging, int& remainingMinutes);
+
+    // Add this line to the existing private methods
+    void RenderAudioPanel();
+
+    // Add these member functions to your Overlay class
+
+    // Add these member variables
+    bool m_showAudioWindow = false;
+    ImVec2 m_audioWindowPos = ImVec2(200, 200);  // Default position
+
+private:
+    // Audio window settings
+    bool m_showAudioSettings = false;
+
+    // Add the additional member variables and methods:
+    bool m_mouseInsideAudioWindow = false;
+    void RenderAudioSettingsPanel();
+public:
+    // Add these public methods
+    void ToggleAudioWindow();
+    void RenderAudioWindow();
+    
+    // Add these to your class definition
+
+    // Network settings struct (add to OverlaySettings or as a separate struct)
+    struct NetworkSettings {
+        bool showNetworkDetails = true;
+        bool alwaysOnTop = false;
+        bool savePosition = true;
+    };
+
+    // Add to OverlaySettings
+    struct OverlaySettings 
+    {
+        bool showCpuInfo = true;
+        bool showCpuTemperature = true;
+        bool showMemoryInfo = true;
+        bool showNetworkInfo = true;
+        bool showAudioControls = true;
+        bool showBatteryInfo = true;
+        bool saveToFile = false;
+        AudioSettings audioSettings;
+        NetworkSettings networkSettings; // Add this line
+    };
+
+    // Add these member variables
+private:
+    bool m_showNetworkWindow = false;
+    bool m_showNetworkSettings = false;
+    bool m_mouseInsideNetworkWindow = false;
+    ImVec2 m_networkWindowPos = ImVec2(300, 300);
+    bool m_scanningNetworks = false;
+    std::vector<std::pair<std::string, std::string>> m_availableNetworks; // Name, SSID
+    std::string m_currentNetwork;
+    bool m_isWifiEnabled = true;
+    
+    // Add these member functions
+public:
+    void ToggleNetworkWindow();
+    
+private:
+    void RenderNetworkWindow();
+    void RenderNetworkSettingsPanel();
+    void ScanNetworks();
+    void ToggleWifi(bool enable);
+    std::string GetCurrentNetworkName();
+    bool IsWifiEnabled();
 };
 
 // Global keyboard hook function

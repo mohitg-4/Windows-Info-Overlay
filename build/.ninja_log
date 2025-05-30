@@ -6,8 +6,8 @@
 23	2364	7700591997933270	CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_demo.cpp.obj	1726a2d751163753
 18	4206	7700591997875917	CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui.cpp.obj	7e07fd45c96c22fd
 28	3005	7700591997987193	CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_draw.cpp.obj	439001441681d98c
-38	5016	7702183522586622	CMakeFiles/WindowsInfoOverlay.dir/Overlay.cpp.obj	db8856a78f91226c
-29	4070	7702183522506611	CMakeFiles/WindowsInfoOverlay.dir/main.cpp.obj	1fb508cef76fa2cc
-4380	4688	7702172900481489	WindowsInfoOverlay.exe	99ef37a3ce39b279
-41	4601	7702185554993322	CMakeFiles/WindowsInfoOverlay.dir/Overlay.cpp.obj	db8856a78f91226c
-4603	4944	7702185600620186	WindowsInfoOverlay.exe	99ef37a3ce39b279
+37	3407	7703148405828073	CMakeFiles/WindowsInfoOverlay.dir/Overlay.cpp.obj	db8856a78f91226c
+31	2648	7703148405758080	CMakeFiles/WindowsInfoOverlay.dir/main.cpp.obj	1fb508cef76fa2cc
+37	283	7703148618731947	WindowsInfoOverlay.exe	99ef37a3ce39b279
+33	3181	7703151261436917	CMakeFiles/WindowsInfoOverlay.dir/Overlay.cpp.obj	db8856a78f91226c
+3182	3430	7703151292928868	WindowsInfoOverlay.exe	99ef37a3ce39b279

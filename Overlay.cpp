@@ -151,13 +151,20 @@ Overlay::Overlay() :
     m_pEnumerator(nullptr),
     m_pDevice(nullptr),
     m_pEndpointVolume(nullptr),
-    m_selectedAudioDevice(0)
+    m_selectedAudioDevice(0),
+    m_showAudioWindow(false),
+    m_showNetworkWindow(false),
+    m_scanningNetworks(false),
+    m_isWifiEnabled(true)
 {
     // Initialize PDH
     InitializeCpuCounter();
     
     // Initialize audio
     InitializeAudio();
+    
+    // Initialize network information
+    m_currentNetwork = GetCurrentNetworkName();
 }
 
 Overlay::~Overlay()
@@ -211,10 +218,15 @@ bool Overlay::Initialize()
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    
+    // Increase font size - add these lines
+    ImFontConfig fontConfig;
+    fontConfig.SizePixels = 16.0f; // Increase font size (default is usually around 13)
+    io.Fonts->AddFontDefault(&fontConfig);
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
-
+    
     // Setup Platform/Renderer backends
     ImGui_ImplWin32_Init(m_hwnd);
     ImGui_ImplDX11_Init(m_pd3dDevice, m_pd3dDeviceContext);
@@ -346,6 +358,20 @@ void Overlay::RenderOverlay()
     {
         m_showSettings = !m_showSettings;
     }
+
+    ImGui::Separator();
+    // Add Audio Window toggle button
+    if (ImGui::Button("Audio"))
+    {
+        ToggleAudioWindow();
+    }
+    
+    // Add Network Window toggle button next to Audio button
+    ImGui::SameLine();
+    if (ImGui::Button("Network"))
+    {
+        ToggleNetworkWindow();
+    }
     
     ImGui::Separator();
     
@@ -398,72 +424,61 @@ void Overlay::RenderOverlay()
         ImGui::ProgressBar(memoryUsagePercent / 100.0f, ImVec2(barWidth, 8), "");
     }
     
-    if (m_settings.showNetworkInfo)
+    if (m_settings.showBatteryInfo)
     {
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "NETWORK");
-        ImGui::Text("Down:");
-        ImGui::SameLine(100);
-        ImGui::Text("%.2f MB/s", GetNetworkDownloadSpeed());
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "BATTERY");
         
-        ImGui::Text("Up:");
-        ImGui::SameLine(100);
-        ImGui::Text("%.2f MB/s", GetNetworkUploadSpeed());
-    }
-    
-    if (m_settings.showAudioControls)
-    {
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "AUDIO");
+        int batteryPercent;
+        bool isCharging;
+        int remainingMinutes;
         
-        // Volume slider
-        float volume = GetMasterVolume();
-        bool muted = IsMasterMuted();
-        
-        // Mute button with icon
-        if (ImGui::Button(muted ? "🔇" : "🔊", ImVec2(25, 20)))
+        if (GetBatteryStatus(batteryPercent, isCharging, remainingMinutes))
         {
-            SetMasterMuted(!muted);
-        }
-        
-        ImGui::SameLine();
-        
-        // Volume slider
-        ImGui::PushItemWidth(ImGui::GetWindowWidth() - 50);
-        if (ImGui::SliderFloat("##Volume", &volume, 0.0f, 1.0f, ""))
-        {
-            SetMasterVolume(volume);
-        }
-        ImGui::PopItemWidth();
-        
-        // Show the percentage
-        ImGui::SameLine();
-        ImGui::Text("%d%%", static_cast<int>(volume * 100));
-        
-        // Audio device combo box
-        ImGui::Text("Device:");
-        ImGui::SameLine(100);
-        
-        ImGui::PushItemWidth(ImGui::GetWindowWidth() - 110);
-        if (ImGui::BeginCombo("##AudioDevice", m_audioDevices[m_selectedAudioDevice].first.c_str()))
-        {
-            for (int i = 0; i < m_audioDevices.size(); i++)
+            // Battery percentage and status
+            ImGui::Text("Level:");
+            ImGui::SameLine(100);
+            
+            // Choose color based on battery level
+            ImVec4 batteryColor;
+            if (isCharging)
+                batteryColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // Green when charging
+            else if (batteryPercent < 20)
+                batteryColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f); // Red when low
+            else if (batteryPercent < 50)
+                batteryColor = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); // Yellow when medium
+            else
+                batteryColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); // Green when high
+                
+            ImGui::TextColored(batteryColor, "%d%%  %s", 
+                batteryPercent, 
+                isCharging ? "🔌" : "🔋");
+            
+            // Remaining time (only show when discharging and value is known)
+            if (!isCharging && remainingMinutes > 0)
             {
-                bool is_selected = (m_selectedAudioDevice == i);
-                if (ImGui::Selectable(m_audioDevices[i].first.c_str(), is_selected))
-                {
-                    SetAudioDevice(i);
-                }
-                if (is_selected)
-                    ImGui::SetItemDefaultFocus();
+                int hours = remainingMinutes / 60;
+                int mins = remainingMinutes % 60;
+                ImGui::Text("Remaining:");
+                ImGui::SameLine(100);
+                ImGui::Text("%dh %dm", hours, mins);
             }
-            ImGui::EndCombo();
+            else if (isCharging)
+            {
+                ImGui::Text("Status:");
+                ImGui::SameLine(100);
+                ImGui::Text("Charging");
+            }
+            
+            // Battery progress bar
+            float barWidth = 200.0f;
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - barWidth) * 0.5f);
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, batteryColor);
+            ImGui::ProgressBar(batteryPercent / 100.0f, ImVec2(barWidth, 8), "");
+            ImGui::PopStyleColor();
         }
-        ImGui::PopItemWidth();
-        
-        // Add a refresh button for audio devices
-        ImGui::SameLine();
-        if (ImGui::Button("↻"))
+        else
         {
-            RefreshAudioDevices();
+            ImGui::Text("No battery detected");
         }
         
         ImGui::Spacing();
@@ -471,7 +486,21 @@ void Overlay::RenderOverlay()
     
     ImGui::PopStyleVar();  // Restore item spacing
     
+    
+
     ImGui::End();
+
+    // Render audio window (this will set m_mouseInsideAudioWindow)
+    if (m_showAudioWindow)
+    {
+        RenderAudioWindow();
+    }
+
+    if (m_showNetworkWindow)
+    {
+        RenderNetworkWindow();
+    }
+    
 
     // Draw background
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -488,14 +517,23 @@ void Overlay::RenderOverlay()
     
     ImGui::End();
 
+    // Store if we're currently interacting with dropdown menus or popups
+    bool popupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    bool comboActive = ImGui::IsPopupOpen("##AudioDevice");
+    
+    // Use the windowPos and windowSize variables declared earlier
+    // (No need to redeclare them here)
+    
     // Check if mouse click is inside the system info window
     bool mouseInsideWindow = (io.MousePos.x >= windowPos.x && 
                              io.MousePos.x <= windowPos.x + windowSize.x &&
                              io.MousePos.y >= windowPos.y &&
                              io.MousePos.y <= windowPos.y + windowSize.y);
-                             
-    // Only toggle OFF if click is outside the window AND not in Flow Launcher
-    if (ImGui::IsMouseClicked(0) && !mouseInsideWindow && !IsClickedInFlowLauncher())
+    
+    // Only toggle OFF if click is outside all windows AND not in Flow Launcher
+    // AND no popup/combo is active
+    if (ImGui::IsMouseClicked(0) && !mouseInsideWindow && !m_mouseInsideAudioWindow && 
+        !m_mouseInsideNetworkWindow && !IsClickedInFlowLauncher() && !popupOpen && !comboActive)
     {
         // Add a small delay to prevent immediate toggling
         static DWORD lastClickTime = 0;
@@ -524,6 +562,7 @@ void Overlay::RenderSettingsPanel()
     // Left column
     ImGui::Checkbox("CPU Info", &m_settings.showCpuInfo);
     ImGui::Checkbox("Memory Info", &m_settings.showMemoryInfo);
+    ImGui::Checkbox("Battery Info", &m_settings.showBatteryInfo);  // Add this line
     
     // Right column
     ImGui::NextColumn();
@@ -556,9 +595,121 @@ void Overlay::RenderSettingsPanel()
         }
         else
         {
-            m_settings = OverlaySettings{};
+            memset(&m_settings, 0, sizeof(m_settings));
         }
         m_showSettings = false;
+    }
+    
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+void Overlay::RenderAudioPanel()
+{
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 0.9f));
+    
+    // Make the audio panel have a distinct look
+    ImGui::BeginChild("AudioPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 170), true);
+    
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "AUDIO CONTROL PANEL");
+    ImGui::Separator();
+    
+    // Volume controls
+    float volume = GetMasterVolume();
+    bool muted = IsMasterMuted();
+    
+    // Large mute button with icon
+    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use the larger font
+    if (ImGui::Button(muted ? "🔇 MUTED" : "🔊 UNMUTED", ImVec2(150, 30)))
+    {
+        SetMasterMuted(!muted);
+    }
+    ImGui::PopFont();
+    
+    ImGui::SameLine();
+    
+    // Display current volume percentage
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 60);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5);
+    ImGui::Text("%d%%", static_cast<int>(volume * 100));
+    
+    // Volume slider - bigger and with better visual
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(0.2f, 0.7f, 0.9f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(0.3f, 0.8f, 1.0f, 1.0f));
+    ImGui::SetNextItemWidth(ImGui::GetWindowWidth() - 30);
+    
+    if (ImGui::SliderFloat("##Volume", &volume, 0.0f, 1.0f, ""))
+    {
+        SetMasterVolume(volume);
+    }
+    ImGui::PopStyleColor(2);
+    
+    ImGui::Spacing();
+    
+    // Audio device selection with a more visible header
+    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.5f, 1.0f), "Output Device:");
+    
+    // Device dropdown with full width
+    ImGui::SetNextItemWidth(ImGui::GetWindowWidth() - 70);
+    if (ImGui::BeginCombo("##AudioDevice", m_audioDevices[m_selectedAudioDevice].first.c_str()))
+    {
+        for (int i = 0; i < m_audioDevices.size(); i++)
+        {
+            bool is_selected = (m_selectedAudioDevice == i);
+            if (ImGui::Selectable(m_audioDevices[i].first.c_str(), is_selected))
+            {
+                SetAudioDevice(i);
+            }
+            if (is_selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    
+    // Refresh button
+    ImGui::SameLine();
+    if (ImGui::Button("↻ Refresh", ImVec2(65, 25)))
+    {
+        RefreshAudioDevices();
+    }
+    
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// Add this function to implement the audio settings panel
+
+void Overlay::RenderAudioSettingsPanel()
+{
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 0.9f));
+    
+    // Create a child window for settings
+    ImGui::BeginChild("AudioSettingsPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 140), true);
+    
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "AUDIO SETTINGS");
+    ImGui::Separator();
+    
+    // Audio-specific settings
+    ImGui::Checkbox("Show Volume Percentage", &m_settings.audioSettings.showVolumePercentage);
+    ImGui::Checkbox("Show Device Selector", &m_settings.audioSettings.showDeviceSelector);
+    ImGui::Checkbox("Always On Top", &m_settings.audioSettings.alwaysOnTop);
+    ImGui::Checkbox("Save Window Position", &m_settings.audioSettings.savePosition);
+    
+    ImGui::Separator();
+    
+    // Button to apply settings
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 120) * 0.5f);  // Center the button
+    if (ImGui::Button("Apply", ImVec2(120, 30)))
+    {
+        // Apply settings (like always-on-top)
+        if (m_settings.audioSettings.alwaysOnTop)
+        {
+            // In a real implementation, you'd set the audio window to be topmost
+            // This is a placeholder since we're using ImGui windows
+        }
+        
+        SaveSettings(); // Save to persistent storage
+        m_showAudioSettings = false; // Close settings panel
     }
     
     ImGui::EndChild();
@@ -1009,7 +1160,7 @@ void Overlay::LoadSettings()
     else
     {
         // No settings file exists yet, use defaults
-        m_settings = OverlaySettings{};
+        memset(&m_settings, 0, sizeof(m_settings));
     }
 }
 
@@ -1030,8 +1181,188 @@ std::string Overlay::GetSettingsFilePath()
     return "settings.dat";
 }
 
-// Add these implementations at the end of your file
+// Add these new functions
 
+void Overlay::ToggleAudioWindow()
+{
+    m_showAudioWindow = !m_showAudioWindow;
+    
+    // If showing for the first time, position it near the system info window
+    if (m_showAudioWindow && m_isVisible)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        ImVec2 mainWinPos = ImGui::GetWindowPos();
+        m_audioWindowPos = ImVec2(mainWinPos.x + 50, mainWinPos.y + 50);
+    }
+}
+
+void Overlay::RenderAudioWindow()
+{
+    if (!m_showAudioWindow) return;
+    
+    ImGuiIO& io = ImGui::GetIO();
+    
+    // Set position for the audio window
+    ImGui::SetNextWindowPos(m_audioWindowPos, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.9f);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(350, 250), ImVec2(500, 400));
+    
+    // Variables for dragging
+    static bool audioDragging = false;
+    
+    // Enable dragging with Ctrl key
+    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && io.MouseDown[0] && !audioDragging)
+    {
+        audioDragging = true;
+    }
+    
+    if (audioDragging && io.MouseDown[0])
+    {
+        m_audioWindowPos.x += io.MouseDelta.x;
+        m_audioWindowPos.y += io.MouseDelta.y;
+        ImGui::SetNextWindowPos(m_audioWindowPos);
+    }
+    else if (!io.MouseDown[0])
+    {
+        audioDragging = false;
+    }
+    
+    // Begin audio window (no "close" option in &m_showAudioWindow)
+    ImGui::Begin("Audio Controls", nullptr, 
+        ImGuiWindowFlags_NoDecoration | 
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing);
+    
+    // Store window position for next time
+    m_audioWindowPos = ImGui::GetWindowPos();
+    ImVec2 audioWindowSize = ImGui::GetWindowSize();
+    
+    // Add header with settings and close buttons
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Audio Control Panel");
+    
+    // Settings button
+    ImGui::SameLine(ImGui::GetWindowWidth() - 60);
+    if (ImGui::Button("⚙"))
+    {
+        m_showAudioSettings = !m_showAudioSettings;
+    }
+    
+    // Close button
+    ImGui::SameLine(ImGui::GetWindowWidth() - 25);
+    if (ImGui::Button("X"))
+    {
+        m_showAudioWindow = false;
+        ImGui::End();
+        return;
+    }
+    
+    ImGui::Separator();
+    
+    // Show audio settings panel if enabled
+    if (m_showAudioSettings)
+    {
+        RenderAudioSettingsPanel();
+        ImGui::Separator();
+    }
+    
+    // Volume controls section
+    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+    
+    // Get current volume and mute state
+    float volume = GetMasterVolume();
+    bool muted = IsMasterMuted();
+    
+    // Volume display (optional based on settings)
+    if (m_settings.audioSettings.showVolumePercentage)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "Master Volume: %d%%", static_cast<int>(volume * 100));
+    }
+    
+    // Mute toggle button with icon and colorful styling
+    ImGui::PushStyleColor(ImGuiCol_Button, muted ? ImVec4(0.6f, 0.1f, 0.1f, 1.0f) : ImVec4(0.1f, 0.6f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, muted ? ImVec4(0.8f, 0.2f, 0.2f, 1.0f) : ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+    
+    if (ImGui::Button(muted ? "🔇 MUTED" : "🔊 UNMUTED", ImVec2(ImGui::GetWindowWidth() * 0.9f, 40)))
+    {
+        SetMasterMuted(!muted);
+    }
+    ImGui::PopStyleColor(2);
+    
+    ImGui::Spacing();
+    
+    // Volume slider with custom styling
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(0.3f, 0.7f, 0.9f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(0.5f, 0.8f, 1.0f, 1.0f));
+    
+    // Larger volume slider
+    ImGui::SetNextItemWidth(ImGui::GetWindowWidth() * 0.9f);
+    if (ImGui::SliderFloat("##Volume", &volume, 0.0f, 1.0f, ""))
+    {
+        SetMasterVolume(volume);
+    }
+    ImGui::PopStyleColor(3);
+    
+    ImGui::Spacing();
+    
+    // Show device selector only if enabled in settings
+    if (m_settings.audioSettings.showDeviceSelector)
+    {
+        ImGui::Separator();
+        
+        // Audio device selection
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.7f, 1.0f), "Output Device:");
+        ImGui::Spacing();
+        
+        // Custom style for the combo box
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.2f, 0.2f, 0.2f, 0.98f));
+        
+        // Device dropdown with description
+        ImGui::SetNextItemWidth(ImGui::GetWindowWidth() * 0.9f);
+        if (ImGui::BeginCombo("##AudioDevice", m_audioDevices[m_selectedAudioDevice].first.c_str()))
+        {
+            for (int i = 0; i < m_audioDevices.size(); i++)
+            {
+                bool is_selected = (m_selectedAudioDevice == i);
+                if (ImGui::Selectable(m_audioDevices[i].first.c_str(), is_selected))
+                {
+                    SetAudioDevice(i);
+                }
+                if (is_selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopStyleColor(2);
+        
+        ImGui::Spacing();
+        
+        // Refresh button with better styling
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 120) * 0.5f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+        if (ImGui::Button("↻ Refresh Devices", ImVec2(120, 30)))
+        {
+            RefreshAudioDevices();
+        }
+        ImGui::PopStyleColor(2);
+    }
+    
+    ImGui::PopFont();
+    ImGui::End();
+    
+    // Check if mouse is inside audio window - we'll use this in RenderOverlay
+    bool mouseInsideAudio = (io.MousePos.x >= m_audioWindowPos.x && 
+                         io.MousePos.x <= m_audioWindowPos.x + audioWindowSize.x &&
+                         io.MousePos.y >= m_audioWindowPos.y &&
+                         io.MousePos.y <= m_audioWindowPos.y + audioWindowSize.y);
+                         
+    // Store this value to be accessed from RenderOverlay
+    m_mouseInsideAudioWindow = mouseInsideAudio;
+}
+
+// Audio initialization function
 void Overlay::InitializeAudio()
 {
     // Initialize COM if not already initialized
@@ -1085,14 +1416,34 @@ void Overlay::RefreshAudioDevices()
 {
     m_audioDevices.clear();
     
-    if (!m_pEnumerator) return;
+    // Initialize COM for this thread if needed
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
+    
+    if (!m_pEnumerator) 
+    {
+        // Try to create the enumerator if it doesn't exist
+        hr = CoCreateInstance(
+            __uuidof(MMDeviceEnumerator),
+            nullptr,
+            CLSCTX_ALL,
+            __uuidof(IMMDeviceEnumerator),
+            (void**)&m_pEnumerator
+        );
+        
+        if (FAILED(hr))
+        {
+            if (needsUninitialize) CoUninitialize();
+            return;
+        }
+    }
     
     // Add the default device at index 0
     m_audioDevices.push_back(std::make_pair("Default Device", ""));
     
     // Enumerate all audio rendering devices
     IMMDeviceCollection* pCollection = nullptr;
-    HRESULT hr = m_pEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &pCollection);
+    hr = m_pEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &pCollection);
     
     if (SUCCEEDED(hr))
     {
@@ -1154,10 +1505,19 @@ void Overlay::RefreshAudioDevices()
         
         pCollection->Release();
     }
+    
+    if (needsUninitialize)
+    {
+        CoUninitialize();
+    }
 }
 
 void Overlay::SetAudioDevice(int deviceIndex)
 {
+    // Initialize COM for this thread if needed
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
+    
     // Clean up previous device and endpoint
     if (m_pEndpointVolume)
     {
@@ -1171,11 +1531,44 @@ void Overlay::SetAudioDevice(int deviceIndex)
         m_pDevice = nullptr;
     }
     
-    if (!m_pEnumerator || deviceIndex < 0 || deviceIndex >= m_audioDevices.size())
-        return;
+    // Safety check for enumerator
+    if (!m_pEnumerator)
+    {
+        // Try to create the enumerator if it doesn't exist
+        hr = CoCreateInstance(
+            __uuidof(MMDeviceEnumerator),
+            nullptr,
+            CLSCTX_ALL,
+            __uuidof(IMMDeviceEnumerator),
+            (void**)&m_pEnumerator
+        );
+        
+        if (FAILED(hr))
+        {
+            if (needsUninitialize) CoUninitialize();
+            return;
+        }
+    }
+    
+    // Safety check for device index and audio devices vector
+    if (deviceIndex < 0 || m_audioDevices.empty() || deviceIndex >= static_cast<int>(m_audioDevices.size()))
+    {
+        if (m_audioDevices.empty())
+        {
+            RefreshAudioDevices();
+            // If still empty, just exit
+            if (m_audioDevices.empty())
+            {
+                if (needsUninitialize) CoUninitialize();
+                return;
+            }
+        }
+        
+        // Use default device (index 0) if requested index is invalid
+        deviceIndex = 0;
+    }
     
     m_selectedAudioDevice = deviceIndex;
-    HRESULT hr;
     
     // If default device (index 0), get the default device
     if (deviceIndex == 0)
@@ -1195,9 +1588,14 @@ void Overlay::SetAudioDevice(int deviceIndex)
         hr = m_pEnumerator->GetDevice(wDeviceId.c_str(), &m_pDevice);
     }
     
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr) && m_pDevice)
     {
         hr = m_pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&m_pEndpointVolume);
+    }
+    
+    if (needsUninitialize)
+    {
+        CoUninitialize();
     }
 }
 
@@ -1205,9 +1603,27 @@ float Overlay::GetMasterVolume()
 {
     float level = 0.0f;
     
+    // Initialize COM for this thread if needed
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
+    
     if (m_pEndpointVolume)
     {
-        m_pEndpointVolume->GetMasterVolumeLevelScalar(&level);
+        hr = m_pEndpointVolume->GetMasterVolumeLevelScalar(&level);
+        if (FAILED(hr))
+        {
+            // If getting volume fails, try refreshing the audio device
+            SetAudioDevice(m_selectedAudioDevice);
+            if (m_pEndpointVolume)
+            {
+                m_pEndpointVolume->GetMasterVolumeLevelScalar(&level);
+            }
+        }
+    }
+    
+    if (needsUninitialize)
+    {
+        CoUninitialize();
     }
     
     return level;
@@ -1215,9 +1631,30 @@ float Overlay::GetMasterVolume()
 
 void Overlay::SetMasterVolume(float volume)
 {
+    // Initialize COM for this thread if needed
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
+    
     if (m_pEndpointVolume)
     {
-        m_pEndpointVolume->SetMasterVolumeLevelScalar(volume, nullptr);
+        // Make sure volume is in the valid range
+        volume = (volume < 0.0f) ? 0.0f : (volume > 1.0f) ? 1.0f : volume;
+        
+        hr = m_pEndpointVolume->SetMasterVolumeLevelScalar(volume, nullptr);
+        if (FAILED(hr))
+        {
+            // If setting volume fails, try refreshing the audio device
+            SetAudioDevice(m_selectedAudioDevice);
+            if (m_pEndpointVolume)
+            {
+                m_pEndpointVolume->SetMasterVolumeLevelScalar(volume, nullptr);
+            }
+        }
+    }
+    
+    if (needsUninitialize)
+    {
+        CoUninitialize();
     }
 }
 
@@ -1225,9 +1662,27 @@ bool Overlay::IsMasterMuted()
 {
     BOOL muted = FALSE;
     
+    // Initialize COM for this thread if needed
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
+    
     if (m_pEndpointVolume)
     {
-        m_pEndpointVolume->GetMute(&muted);
+        hr = m_pEndpointVolume->GetMute(&muted);
+        if (FAILED(hr))
+        {
+            // If getting mute state fails, try refreshing the audio device
+            SetAudioDevice(m_selectedAudioDevice);
+            if (m_pEndpointVolume)
+            {
+                m_pEndpointVolume->GetMute(&muted);
+            }
+        }
+    }
+    
+    if (needsUninitialize)
+    {
+        CoUninitialize();
     }
     
     return muted != FALSE;
@@ -1235,8 +1690,359 @@ bool Overlay::IsMasterMuted()
 
 void Overlay::SetMasterMuted(bool muted)
 {
+    // Initialize COM for this thread if needed
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
+    
     if (m_pEndpointVolume)
     {
-        m_pEndpointVolume->SetMute(muted, nullptr);
+        hr = m_pEndpointVolume->SetMute(muted, nullptr);
+        if (FAILED(hr))
+        {
+            // If setting mute fails, try refreshing the audio device
+            SetAudioDevice(m_selectedAudioDevice);
+            if (m_pEndpointVolume)
+            {
+                m_pEndpointVolume->SetMute(muted, nullptr);
+            }
+        }
     }
+    
+    if (needsUninitialize)
+    {
+        CoUninitialize();
+    }
+}
+
+bool Overlay::GetBatteryStatus(int& batteryPercent, bool& isCharging, int& remainingMinutes)
+{
+    SYSTEM_POWER_STATUS powerStatus;
+    if (GetSystemPowerStatus(&powerStatus))
+    {
+        // Get battery percentage
+        if (powerStatus.BatteryLifePercent <= 100)
+            batteryPercent = powerStatus.BatteryLifePercent;
+        else
+            batteryPercent = 0; // Unknown
+
+        // Check if it's charging
+        isCharging = (powerStatus.ACLineStatus == 1);
+        
+        // Get remaining minutes
+        if (powerStatus.BatteryLifeTime != BATTERY_LIFE_UNKNOWN)
+            remainingMinutes = powerStatus.BatteryLifeTime / 60; // Convert from seconds to minutes
+        else
+            remainingMinutes = -1; // Unknown
+        
+        return true;
+    }
+    
+    return false;
+}
+
+// Add these functions to the end of your file
+
+void Overlay::ToggleNetworkWindow()
+{
+    m_showNetworkWindow = !m_showNetworkWindow;
+    
+    // If showing for the first time, position it near the system info window
+    if (m_showNetworkWindow && m_isVisible)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        // Position it differently than audio window to avoid overlap
+        m_networkWindowPos = ImVec2(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.3f);
+    }
+    
+    // Update current network info when opening
+    if (m_showNetworkWindow)
+    {
+        m_currentNetwork = GetCurrentNetworkName();
+        m_isWifiEnabled = IsWifiEnabled();
+    }
+}
+
+void Overlay::RenderNetworkWindow()
+{
+    if (!m_showNetworkWindow) return;
+    
+    ImGuiIO& io = ImGui::GetIO();
+    
+    // Set position for the network window
+    ImGui::SetNextWindowPos(m_networkWindowPos, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.9f);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(350, 250), ImVec2(500, 400));
+    
+    // Variables for dragging
+    static bool networkDragging = false;
+    
+    // Enable dragging with Ctrl key
+    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && io.MouseDown[0] && !networkDragging)
+    {
+        networkDragging = true;
+    }
+    
+    if (networkDragging && io.MouseDown[0])
+    {
+        m_networkWindowPos.x += io.MouseDelta.x;
+        m_networkWindowPos.y += io.MouseDelta.y;
+        ImGui::SetNextWindowPos(m_networkWindowPos);
+    }
+    else if (!io.MouseDown[0])
+    {
+        networkDragging = false;
+    }
+    
+    // Begin network window
+    ImGui::Begin("Network Controls", nullptr, 
+        ImGuiWindowFlags_NoDecoration | 
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing);
+    
+    // Store window position for next time
+    m_networkWindowPos = ImGui::GetWindowPos();
+    ImVec2 networkWindowSize = ImGui::GetWindowSize();
+    
+    // Add header with settings and close buttons
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Network Control Panel");
+    
+    // Settings button
+    ImGui::SameLine(ImGui::GetWindowWidth() - 60);
+    if (ImGui::Button("⚙"))
+    {
+        m_showNetworkSettings = !m_showNetworkSettings;
+    }
+    
+    // Close button
+    ImGui::SameLine(ImGui::GetWindowWidth() - 25);
+    if (ImGui::Button("X"))
+    {
+        m_showNetworkWindow = false;
+        ImGui::End();
+        return;
+    }
+    
+    ImGui::Separator();
+    
+    // Show network settings panel if enabled
+    if (m_showNetworkSettings)
+    {
+        RenderNetworkSettingsPanel();
+        ImGui::Separator();
+    }
+    
+    // Network controls section
+    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+    
+    // WiFi On/Off button with status
+    ImGui::PushStyleColor(ImGuiCol_Button, m_isWifiEnabled ? ImVec4(0.1f, 0.6f, 0.1f, 1.0f) : ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, m_isWifiEnabled ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+    
+    if (ImGui::Button(m_isWifiEnabled ? "WiFi: ON" : "WiFi: OFF", ImVec2(ImGui::GetWindowWidth() * 0.9f, 40)))
+    {
+        // Toggle WiFi state
+        ToggleWifi(!m_isWifiEnabled);
+        m_isWifiEnabled = !m_isWifiEnabled;
+    }
+    ImGui::PopStyleColor(2);
+    
+    ImGui::Spacing();
+    
+    // Current connection information
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.7f, 1.0f), "Current Connection:");
+    
+    ImGui::BeginChild("ConnectionInfo", ImVec2(ImGui::GetWindowWidth() * 0.9f, 70), true);
+    
+    ImGui::Text("Network: %s", m_currentNetwork.c_str());
+    ImGui::Separator();
+    
+    // Network speeds using existing functions
+    ImGui::Text("Download: %.2f MB/s", GetNetworkDownloadSpeed());
+    ImGui::Text("Upload: %.2f MB/s", GetNetworkUploadSpeed());
+    
+    ImGui::EndChild();
+    
+    ImGui::Spacing();
+    
+    // Available networks section (if enabled in settings)
+    if (m_settings.networkSettings.showNetworkDetails)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.7f, 1.0f), "Available Networks:");
+        
+        // Button to scan for networks
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+        
+        if (m_scanningNetworks)
+        {
+            ImGui::BeginDisabled(true);
+            ImGui::Button("Scanning...", ImVec2(120, 30));
+            ImGui::EndDisabled();
+        }
+        else
+        {
+            if (ImGui::Button("Scan Networks", ImVec2(120, 30)))
+            {
+                m_scanningNetworks = true;
+                ScanNetworks();
+                m_scanningNetworks = false;
+            }
+        }
+        ImGui::PopStyleColor(2);
+        
+        // List of available networks
+        ImGui::BeginChild("AvailableNetworks", ImVec2(ImGui::GetWindowWidth() * 0.9f, 120), true);
+        
+        if (m_availableNetworks.empty())
+        {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No networks found or scan not performed");
+        }
+        else
+        {
+            for (const auto& network : m_availableNetworks)
+            {
+                bool isCurrentNetwork = (network.first == m_currentNetwork);
+                
+                if (isCurrentNetwork)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
+                }
+                
+                if (ImGui::Selectable(network.first.c_str(), isCurrentNetwork))
+                {
+                    // Connect to network logic would go here
+                    // This would require additional implementation
+                    // You could invoke Windows connection dialog or a custom one
+                }
+                
+                if (isCurrentNetwork)
+                {
+                    ImGui::PopStyleColor();
+                }
+            }
+        }
+        
+        ImGui::EndChild();
+    }
+    
+    ImGui::PopFont();
+    ImGui::End();
+    
+    // Check if mouse is inside network window - we'll use this in RenderOverlay
+    bool mouseInsideNetwork = (io.MousePos.x >= m_networkWindowPos.x && 
+                         io.MousePos.x <= m_networkWindowPos.x + networkWindowSize.x &&
+                         io.MousePos.y >= m_networkWindowPos.y &&
+                         io.MousePos.y <= m_networkWindowPos.y + networkWindowSize.y);
+                         
+    // Store this value to be accessed from RenderOverlay
+    m_mouseInsideNetworkWindow = mouseInsideNetwork;
+}
+
+void Overlay::RenderNetworkSettingsPanel()
+{
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 0.9f));
+    
+    // Create a child window for settings
+    ImGui::BeginChild("NetworkSettingsPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 110), true);
+    
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "NETWORK SETTINGS");
+    ImGui::Separator();
+    
+    // Network-specific settings
+    ImGui::Checkbox("Show Network Details", &m_settings.networkSettings.showNetworkDetails);
+    ImGui::Checkbox("Always On Top", &m_settings.networkSettings.alwaysOnTop);
+    ImGui::Checkbox("Save Window Position", &m_settings.networkSettings.savePosition);
+    
+    ImGui::Separator();
+    
+    // Button to apply settings
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 120) * 0.5f);  // Center the button
+    if (ImGui::Button("Apply", ImVec2(120, 30)))
+    {
+        // Apply settings (like always-on-top)
+        if (m_settings.networkSettings.alwaysOnTop)
+        {
+            // In a real implementation, you'd set the network window to be topmost
+            // This is a placeholder since we're using ImGui windows
+        }
+        
+        SaveSettings(); // Save to persistent storage
+        m_showNetworkSettings = false; // Close settings panel
+    }
+    
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// Implementation of network-related functions
+
+void Overlay::ScanNetworks()
+{
+    // Clear existing networks
+    m_availableNetworks.clear();
+    
+    // This is a placeholder implementation using WlanEnumInterfaces
+    // For a real implementation, you'd use the Native Wifi API (wlanapi.h)
+    
+    // In this demo, we'll add some sample networks
+    m_availableNetworks.push_back(std::make_pair(m_currentNetwork, "Current")); // Current network
+    m_availableNetworks.push_back(std::make_pair("Home Network", "00:11:22:33:44:55"));
+    m_availableNetworks.push_back(std::make_pair("Guest Network", "AA:BB:CC:DD:EE:FF"));
+    m_availableNetworks.push_back(std::make_pair("Neighbor's WiFi", "FF:EE:DD:CC:BB:AA"));
+    
+    // For a real implementation, you would:
+    // 1. Use WlanEnumInterfaces to get all wireless interfaces
+    // 2. For each interface, use WlanScan to refresh the list
+    // 3. Use WlanGetAvailableNetworkList to get available networks
+    // 4. Parse and store the results in m_availableNetworks
+    
+    // Sleep to simulate scanning process
+    Sleep(1000);
+}
+
+void Overlay::ToggleWifi(bool enable)
+{
+    // This is a placeholder implementation
+    // For a real implementation, you can use:
+    // 1. DeviceIoControl with the appropriate control codes
+    // 2. WlanConnect/WlanDisconnect from the Native Wifi API
+    // 3. Or call netsh through a system command
+    
+    // Simulating WiFi toggle
+    m_isWifiEnabled = enable;
+    
+    // If WiFi is disabled, clear current network
+    if (!enable)
+    {
+        m_currentNetwork = "Not Connected";
+    }
+    else
+    {
+        // When enabled, set to default network after a delay
+        Sleep(1000);
+        m_currentNetwork = GetCurrentNetworkName();
+    }
+}
+
+std::string Overlay::GetCurrentNetworkName()
+{
+    // This is a placeholder implementation
+    // For a real implementation, you would use:
+    // 1. WlanQueryInterface to get the current connection info
+    // 2. Parse the WLAN_CONNECTION_ATTRIBUTES to get the profile name
+    
+    // With IP Helper API:
+    // GetAdaptersInfo or GetAdaptersAddresses
+    
+    // For now, let's return a fake network name
+    return m_isWifiEnabled ? "Home Network" : "Not Connected";
+}
+
+bool Overlay::IsWifiEnabled()
+{
+    // This is a placeholder implementation
+    // For a real implementation, you'd check the network adapter status
+    // using GetAdaptersInfo or WlanQueryInterface
+    
+    return m_isWifiEnabled;
 }
