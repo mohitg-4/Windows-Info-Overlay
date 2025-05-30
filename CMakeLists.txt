@@ -35,6 +35,7 @@ target_link_libraries(${PROJECT_NAME}
     oleaut32 
     ole32
     wlanapi
+    winmm
 )
 
 # Set Windows subsystem

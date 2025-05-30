@@ -29,7 +29,8 @@ public:
     // Network operations
     void ScanNetworks();
     void ToggleWifi(bool enable);
-    
+    bool ConnectToNetwork(const std::string& ssid, const std::string& password);
+
     // Update network statistics
     void UpdateSpeeds();
     

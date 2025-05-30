@@ -1,4 +1,9 @@
 #include "NetworkManager.h"
+#include <wlanapi.h>
+#include <objbase.h>
+#include <wtypes.h>
+#pragma comment(lib, "wlanapi.lib")
+#pragma comment(lib, "ole32.lib")
 
 NetworkManager::NetworkManager() :
     m_lastInBytes(0),
@@ -461,4 +466,69 @@ void NetworkManager::ToggleWifi(bool enable)
     }
     
     m_scanning = false;
+}
+
+bool NetworkManager::ConnectToNetwork(const std::string& ssid, const std::string& password)
+{
+    HANDLE hClient = NULL;
+    DWORD dwMaxClient = 2;
+    DWORD dwCurVersion = 0;
+    DWORD dwResult = WlanOpenHandle(dwMaxClient, NULL, &dwCurVersion, &hClient);
+    if (dwResult != ERROR_SUCCESS) return false;
+
+    WLAN_INTERFACE_INFO_LIST* pIfList = NULL;
+    dwResult = WlanEnumInterfaces(hClient, NULL, &pIfList);
+    if (dwResult != ERROR_SUCCESS) {
+        WlanCloseHandle(hClient, NULL);
+        return false;
+    }
+
+    bool success = false;
+    for (DWORD i = 0; i < pIfList->dwNumberOfItems; i++) {
+        WLAN_INTERFACE_INFO* pIfInfo = &pIfList->InterfaceInfo[i];
+
+        // Build profile XML for WPA2-Personal
+        std::string profileXml =
+            "<?xml version=\"1.0\"?>"
+            "<WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\">"
+            "<name>" + ssid + "</name>"
+            "<SSIDConfig><SSID><name>" + ssid + "</name></SSID></SSIDConfig>"
+            "<connectionType>ESS</connectionType>"
+            "<connectionMode>auto</connectionMode>"
+            "<MSM><security><authEncryption><authentication>WPA2PSK</authentication>"
+            "<encryption>AES</encryption><useOneX>false</useOneX></authEncryption>"
+            "<sharedKey><keyType>passPhrase</keyType><protected>false</protected><keyMaterial>" + password + "</keyMaterial></sharedKey>"
+            "</security></MSM></WLANProfile>";
+
+        DWORD dwReason;
+        HRESULT hr = WlanSetProfile(
+            hClient,
+            &pIfInfo->InterfaceGuid,
+            0,
+            std::wstring(profileXml.begin(), profileXml.end()).c_str(),
+            NULL,
+            TRUE,
+            NULL,
+            &dwReason
+        );
+        if (hr != ERROR_SUCCESS) continue;
+
+        WLAN_CONNECTION_PARAMETERS params = {};
+        params.wlanConnectionMode = wlan_connection_mode_profile;
+        params.strProfile = std::wstring(ssid.begin(), ssid.end()).c_str();
+        params.pDot11Ssid = NULL;
+        params.pDesiredBssidList = NULL;
+        params.dot11BssType = dot11_BSS_type_any;
+        params.dwFlags = 0;
+
+        hr = WlanConnect(hClient, &pIfInfo->InterfaceGuid, &params, NULL);
+        if (hr == ERROR_SUCCESS) {
+            success = true;
+            break;
+        }
+    }
+
+    WlanFreeMemory(pIfList);
+    WlanCloseHandle(hClient, NULL);
+    return success;
 }

@@ -147,9 +147,10 @@ Overlay::Overlay() :
     m_mouseInsideAudioWindow(false),
     m_mouseInsideNetworkWindow(false)
 {
-    // Initialize default settings
-    m_settings.audioSettings.showVolumePercentage = true;
-    m_settings.audioSettings.showDeviceSelector = true;
+    // Initialize audio settings
+    m_settings.audioSettings.showVisualizer = true;  // Make sure this is true
+    m_settings.audioSettings.visualizerStyle = 0;    // Default to bars
+    m_settings.audioSettings.visualizerSensitivity = 1.0f; // Default sensitivity
     m_settings.audioSettings.alwaysOnTop = false;
     m_settings.audioSettings.savePosition = true;
     
@@ -218,8 +219,20 @@ bool Overlay::Initialize()
     // Increase font size - add these lines
     ImFontConfig fontConfig;
     fontConfig.SizePixels = 16.0f; // Increase font size (default is usually around 13)
-    io.Fonts->AddFontDefault(&fontConfig);
-
+    ImFont* emojiFont = io.Fonts->AddFontFromFileTTF(
+        "C:\\Windows\\Fonts\\seguiemj.ttf", 13.5f, NULL, io.Fonts->GetGlyphRangesDefault());
+    if (emojiFont)
+    {
+        io.FontDefault = emojiFont; // Make it the universal font
+        m_emojiFont = emojiFont;
+    }
+    else
+    {
+        // Fallback to default if loading fails
+        io.Fonts->AddFontDefault(&fontConfig);
+        m_emojiFont = nullptr;
+    }
+    
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
     
@@ -361,30 +374,30 @@ void Overlay::RenderOverlay()
     {
         ToggleAudioWindow();
     }
-    
+        
     // Add Network Window toggle button next to Audio button
     ImGui::SameLine();
     if (ImGui::Button("Network"))
     {
         ToggleNetworkWindow();
     }
-    
+        
     ImGui::Separator();
-    
+        
     // Store the window position and size to detect clicks
     ImVec2 windowPos = ImGui::GetWindowPos();
     ImVec2 windowSize = ImGui::GetWindowSize();
-    
+        
     // Show settings panel if enabled
     if (m_showSettings)
     {
         RenderSettingsPanel();
         ImGui::Separator();
     }
-    
+        
     // More compact layout for system info sections
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 4));  // Slightly increased spacing
-    
+        
     if (m_settings.showCpuInfo)
     {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "CPU INFO");
@@ -401,7 +414,7 @@ void Overlay::RenderOverlay()
         // Add a small spacing after the CPU section
         ImGui::Spacing();
     }
-    
+        
     if (m_settings.showMemoryInfo)
     {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "MEMORY");
@@ -419,7 +432,7 @@ void Overlay::RenderOverlay()
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - barWidth) * 0.5f);
         ImGui::ProgressBar(memoryUsagePercent / 100.0f, ImVec2(barWidth, 8), "");
     }
-    
+        
     if (m_settings.showBatteryInfo)
     {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "BATTERY");
@@ -470,7 +483,7 @@ void Overlay::RenderOverlay()
             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - barWidth) * 0.5f);
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, batteryColor);
             ImGui::ProgressBar(batteryPercent / 100.0f, ImVec2(barWidth, 8), "");
-            ImGui::PopStyleColor();
+            ImGui::PopStyleColor(1);
         }
         else
         {
@@ -479,25 +492,23 @@ void Overlay::RenderOverlay()
         
         ImGui::Spacing();
     }
-    
+        
     ImGui::PopStyleVar();  // Restore item spacing
     
-    
-
     ImGui::End();
-
+    
     // Render audio window (this will set m_mouseInsideAudioWindow)
     if (m_showAudioWindow)
     {
         RenderAudioWindow();
     }
-
+    
     if (m_showNetworkWindow)
     {
         RenderNetworkWindow();
     }
+        
     
-
     // Draw background
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y));
@@ -512,7 +523,7 @@ void Overlay::RenderOverlay()
         ImGuiWindowFlags_NoInputs);
     
     ImGui::End();
-
+    
     // Store if we're currently interacting with dropdown menus or popups
     bool popupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     bool comboActive = ImGui::IsPopupOpen("##AudioDevice");
@@ -597,73 +608,7 @@ void Overlay::RenderSettingsPanel()
     }
     
     ImGui::EndChild();
-    ImGui::PopStyleColor();
-}
-
-// Add this function to implement the audio settings panel
-
-void Overlay::RenderAudioSettingsPanel()
-{
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 0.9f));
-    
-    // Create a child window for settings
-    ImGui::BeginChild("AudioSettingsPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 140), true);
-    
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "AUDIO SETTINGS");
-    ImGui::Separator();
-    
-    // Audio-specific settings
-    ImGui::Checkbox("Show Volume Percentage", &m_settings.audioSettings.showVolumePercentage);
-    ImGui::Checkbox("Show Device Selector", &m_settings.audioSettings.showDeviceSelector);
-    ImGui::Checkbox("Always On Top", &m_settings.audioSettings.alwaysOnTop);
-    ImGui::Checkbox("Save Window Position", &m_settings.audioSettings.savePosition);
-    
-    ImGui::Separator();
-    
-    // Button to apply settings
-    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 120) * 0.5f);  // Center the button
-    if (ImGui::Button("Apply", ImVec2(120, 30)))
-    {
-        // Apply settings (like always-on-top)
-        if (m_settings.audioSettings.alwaysOnTop)
-        {
-            // In a real implementation, you'd set the audio window to be topmost
-            // This is a placeholder since we're using ImGui windows
-        }
-        
-        SaveSettings(); // Save to persistent storage
-        m_showAudioSettings = false; // Close settings panel
-    }
-    
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-}
-
-void Overlay::Cleanup()
-{
-    m_isRunning = false;
-    
-    // Cleanup PDH resources
-    if (m_pdh_initialized) {
-        PdhCloseQuery(m_cpuQuery);
-        m_pdh_initialized = false;
-    }
-    
-    // Unhook keyboard hook
-    if (g_keyboardHook)
-    {
-        UnhookWindowsHookEx(g_keyboardHook);
-        g_keyboardHook = NULL;
-    }
-    
-    // Cleanup
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
-
-    CleanupDeviceD3D();
-    DestroyWindow(m_hwnd);
-    UnregisterClassW(L"WindowsInfoOverlay", GetModuleHandle(NULL));
+    ImGui::PopStyleColor(1);
 }
 
 bool Overlay::CreateDeviceD3D()
@@ -1227,196 +1172,49 @@ void Overlay::RenderAudioWindow()
     m_mouseInsideAudioWindow = mouseInsideAudio;
 }
 
-void Overlay::RenderNetworkWindow()
-{
-    if (!m_showNetworkWindow) return;
-    
-    ImGuiIO& io = ImGui::GetIO();
-    
-    // Set position for the network window
-    ImGui::SetNextWindowPos(m_networkWindowPos, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(0.9f);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(350, 250), ImVec2(500, 400));
-    
-    // Variables for dragging
-    static bool networkDragging = false;
-    
-    // Enable dragging with Ctrl key
-    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && io.MouseDown[0] && !networkDragging)
-    {
-        networkDragging = true;
-    }
-    
-    if (networkDragging && io.MouseDown[0])
-    {
-        m_networkWindowPos.x += io.MouseDelta.x;
-        m_networkWindowPos.y += io.MouseDelta.y;
-        ImGui::SetNextWindowPos(m_networkWindowPos);
-    }
-    else if (!io.MouseDown[0])
-    {
-        networkDragging = false;
-    }
-    
-    // Begin network window
-    ImGui::Begin("Network Controls", nullptr, 
-        ImGuiWindowFlags_NoDecoration | 
-        ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoFocusOnAppearing);
-    
-    // Store window position for next time
-    m_networkWindowPos = ImGui::GetWindowPos();
-    ImVec2 networkWindowSize = ImGui::GetWindowSize();
-    
-    // Add header with settings and close buttons
-    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Network Control Panel");
-    
-    // Settings button
-    ImGui::SameLine(ImGui::GetWindowWidth() - 60);
-    if (ImGui::Button("⚙"))
-    {
-        m_showNetworkSettings = !m_showNetworkSettings;
-    }
-    
-    // Close button
-    ImGui::SameLine(ImGui::GetWindowWidth() - 25);
-    if (ImGui::Button("X"))
-    {
-        m_showNetworkWindow = false;
-        ImGui::End();
-        return;
-    }
-    
-    ImGui::Separator();
-    
-    // Show network settings panel if enabled
-    if (m_showNetworkSettings)
-    {
-        RenderNetworkSettingsPanel();
-        ImGui::Separator();
-    }
-    
-    // Network controls section
-    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-    
-    // WiFi On/Off button with status
-    bool wifiEnabled = m_networkManager.IsWifiEnabled();
-    ImGui::PushStyleColor(ImGuiCol_Button, wifiEnabled ? ImVec4(0.1f, 0.6f, 0.1f, 1.0f) : ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, wifiEnabled ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-    
-    if (ImGui::Button(wifiEnabled ? "WiFi: ON" : "WiFi: OFF", ImVec2(ImGui::GetWindowWidth() * 0.9f, 40)))
-    {
-        // Toggle WiFi state using the manager
-        m_networkManager.ToggleWifi(!wifiEnabled);
-    }
-    ImGui::PopStyleColor(2);
-    
-    ImGui::Spacing();
-    
-    // Current connection information
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.7f, 1.0f), "Current Connection:");
-    
-    ImGui::BeginChild("ConnectionInfo", ImVec2(ImGui::GetWindowWidth() * 0.9f, 70), true);
-    
-    ImGui::Text("Network: %s", m_networkManager.GetCurrentNetworkName().c_str());
-    ImGui::Separator();
-    
-    // Network speeds using the manager
-    ImGui::Text("Download: %.2f MB/s", m_networkManager.GetDownloadSpeed());
-    ImGui::Text("Upload: %.2f MB/s", m_networkManager.GetUploadSpeed());
-    
-    ImGui::EndChild();
-    
-    ImGui::Spacing();
-    
-    // Available networks section (if enabled in settings)
-    if (m_settings.networkSettings.showNetworkDetails)
-    {
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.7f, 1.0f), "Available Networks:");
-        
-        // Button to scan for networks
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
-        
-        if (m_networkManager.IsScanning())
-        {
-            ImGui::BeginDisabled(true);
-            ImGui::Button("Scanning...", ImVec2(120, 30));
-            ImGui::EndDisabled();
-        }
-        else
-        {
-            if (ImGui::Button("Scan Networks", ImVec2(120, 30)))
-            {
-                m_networkManager.ScanNetworks();
-            }
-        }
-        ImGui::PopStyleColor(2);
-        
-        // List of available networks
-        ImGui::BeginChild("AvailableNetworks", ImVec2(ImGui::GetWindowWidth() * 0.9f, 120), true);
-        
-        const auto& availableNetworks = m_networkManager.GetAvailableNetworks();
-        if (availableNetworks.empty())
-        {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No networks found or scan not performed");
-        }
-        else
-        {
-            std::string currentNetwork = m_networkManager.GetCurrentNetworkName();
-            for (const auto& network : availableNetworks)
-            {
-                bool isCurrentNetwork = (network.first == currentNetwork);
-                
-                if (isCurrentNetwork)
-                {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-                }
-                
-                if (ImGui::Selectable(network.first.c_str(), isCurrentNetwork))
-                {
-                    // Connect to network logic would go here
-                    // This would require additional implementation
-                    // You could invoke Windows connection dialog or a custom one
-                }
-                
-                if (isCurrentNetwork)
-                {
-                    ImGui::PopStyleColor();
-                }
-            }
-        }
-        
-        ImGui::EndChild();
-    }
-    
-    ImGui::PopFont();
-    ImGui::End();
-    
-    // Check if mouse is inside network window - we'll use this in RenderOverlay
-    bool mouseInsideNetwork = (io.MousePos.x >= m_networkWindowPos.x && 
-                         io.MousePos.x <= m_networkWindowPos.x + networkWindowSize.x &&
-                         io.MousePos.y >= m_networkWindowPos.y &&
-                         io.MousePos.y <= m_networkWindowPos.y + networkWindowSize.y);
-                         
-    // Store this value to be accessed from RenderOverlay
-    m_mouseInsideNetworkWindow = mouseInsideNetwork;
-}
 
-void Overlay::RenderNetworkSettingsPanel()
+void Overlay::RenderAudioSettingsPanel()
 {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 0.9f));
     
     // Create a child window for settings
-    ImGui::BeginChild("NetworkSettingsPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 110), true);
+    ImGui::BeginChild("AudioSettingsPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 170), true);
     
-    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "NETWORK SETTINGS");
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "AUDIO SETTINGS");
     ImGui::Separator();
     
-    // Network-specific settings
-    ImGui::Checkbox("Show Network Details", &m_settings.networkSettings.showNetworkDetails);
-    ImGui::Checkbox("Always On Top", &m_settings.networkSettings.alwaysOnTop);
-    ImGui::Checkbox("Save Window Position", &m_settings.networkSettings.savePosition);
+    // Audio-specific settings
+    ImGui::Checkbox("Show Volume Percentage", &m_settings.audioSettings.showVolumePercentage);
+    ImGui::Checkbox("Show Device Selector", &m_settings.audioSettings.showDeviceSelector);
+    ImGui::Checkbox("Show Visualizer", &m_settings.audioSettings.showVisualizer);
+    
+    // Visualizer settings
+    if (m_settings.audioSettings.showVisualizer)
+    {
+        const char* visualizerStyles[] = { "Bars", "Line", "Circle" };
+        
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(ImGui::GetWindowWidth() * 0.6f);
+        if (ImGui::Combo("Style", &m_settings.audioSettings.visualizerStyle, visualizerStyles, IM_ARRAYSIZE(visualizerStyles)))
+        {
+            m_audioManager.UpdateVisualizerSettings(
+                m_settings.audioSettings.visualizerSensitivity,
+                m_settings.audioSettings.visualizerStyle
+            );
+        }
+        
+        ImGui::SetNextItemWidth(ImGui::GetWindowWidth() * 0.6f);
+        if (ImGui::SliderFloat("Sensitivity", &m_settings.audioSettings.visualizerSensitivity, 0.2f, 5.0f, "%.1f"))
+        {
+            m_audioManager.UpdateVisualizerSettings(
+                m_settings.audioSettings.visualizerSensitivity,
+                m_settings.audioSettings.visualizerStyle
+            );
+        }
+    }
+    
+    ImGui::Checkbox("Always On Top", &m_settings.audioSettings.alwaysOnTop);
+    ImGui::Checkbox("Save Window Position", &m_settings.audioSettings.savePosition);
     
     ImGui::Separator();
     
@@ -1425,43 +1223,206 @@ void Overlay::RenderNetworkSettingsPanel()
     if (ImGui::Button("Apply", ImVec2(120, 30)))
     {
         // Apply settings (like always-on-top)
-        if (m_settings.networkSettings.alwaysOnTop)
+        if (m_settings.audioSettings.alwaysOnTop)
         {
-            // In a real implementation, you'd set the network window to be topmost
-            // This is a placeholder since we're using ImGui windows
+            // In a real implementation, you'd set the audio window to be topmost
+        }
+        
+        // Start or stop visualizer based on settings
+        if (m_settings.audioSettings.showVisualizer) {
+            if (!m_audioManager.IsVisualizerActive()) {
+                m_audioManager.StartVisualizerCapture();
+            }
+        } else {
+            if (m_audioManager.IsVisualizerActive()) {
+                m_audioManager.StopVisualizerCapture();
+            }
         }
         
         SaveSettings(); // Save to persistent storage
-        m_showNetworkSettings = false; // Close settings panel
+        m_showAudioSettings = false; // Close settings panel
     }
     
     ImGui::EndChild();
     ImGui::PopStyleColor();
 }
 
-// Add this function to get battery status
-bool Overlay::GetBatteryStatus(int& batteryPercent, bool& isCharging, int& remainingMinutes)
+void Overlay::Cleanup()
 {
-    SYSTEM_POWER_STATUS powerStatus;
-    if (GetSystemPowerStatus(&powerStatus))
-    {
-        // Get battery percentage
-        if (powerStatus.BatteryLifePercent <= 100)
-            batteryPercent = powerStatus.BatteryLifePercent;
-        else
-            batteryPercent = 0; // Unknown
-
-        // Check if it's charging
-        isCharging = (powerStatus.ACLineStatus == 1);
-        
-        // Get remaining minutes
-        if (powerStatus.BatteryLifeTime != BATTERY_LIFE_UNKNOWN)
-            remainingMinutes = powerStatus.BatteryLifeTime / 60; // Convert from seconds to minutes
-        else
-            remainingMinutes = -1; // Unknown
-        
-        return true;
+    m_isRunning = false;
+    
+    // Cleanup PDH resources
+    if (m_pdh_initialized) {
+        PdhCloseQuery(m_cpuQuery);
+        m_pdh_initialized = false;
     }
     
+    // Unhook keyboard hook
+    if (g_keyboardHook)
+    {
+        UnhookWindowsHookEx(g_keyboardHook);
+        g_keyboardHook = NULL;
+    }
+    
+    // Cleanup
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+
+    CleanupDeviceD3D();
+    DestroyWindow(m_hwnd);
+    UnregisterClassW(L"WindowsInfoOverlay", GetModuleHandle(NULL));
+}
+
+// Returns true if battery info is available, false otherwise
+bool Overlay::GetBatteryStatus(int& percent, bool& charging, int& minutes)
+{
+    SYSTEM_POWER_STATUS status;
+    if (GetSystemPowerStatus(&status)) {
+        percent = status.BatteryLifePercent;
+        charging = (status.ACLineStatus == 1);
+        minutes = (status.BatteryLifeTime != (DWORD)-1) ? (int)(status.BatteryLifeTime / 60) : -1;
+        return (status.BatteryFlag != 128); // 128 = No battery
+    }
+    percent = 0;
+    charging = false;
+    minutes = -1;
     return false;
+}
+
+void Overlay::RenderNetworkWindow()
+{
+    if (!m_showNetworkWindow) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Set position for the network window
+    ImGui::SetNextWindowPos(m_networkWindowPos, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(350, 250), ImVec2(500, 400));
+
+    // Dragging logic (Ctrl+Drag)
+    static bool dragging = false;
+    if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && io.MouseDown[0] && !dragging)
+        dragging = true;
+    if (dragging && io.MouseDown[0]) {
+        m_networkWindowPos.x += io.MouseDelta.x;
+        m_networkWindowPos.y += io.MouseDelta.y;
+        ImGui::SetNextWindowPos(m_networkWindowPos);
+    } else if (!io.MouseDown[0]) {
+        dragging = false;
+    }
+
+    ImGui::Begin("Network Info", nullptr,
+        ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing);
+
+    // Store window position for next time
+    m_networkWindowPos = ImGui::GetWindowPos();
+    ImVec2 windowSize = ImGui::GetWindowSize();
+
+    // Header
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Network Panel");
+
+    // Settings button (optional, stub)
+    ImGui::SameLine(ImGui::GetWindowWidth() - 60);
+    if (ImGui::Button("⚙")) {
+        m_showNetworkSettings = !m_showNetworkSettings;
+    }
+
+    // Close button
+    ImGui::SameLine(ImGui::GetWindowWidth() - 25);
+    if (ImGui::Button("X")) {
+        m_showNetworkWindow = false;
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Separator();
+
+    // Show network settings panel if enabled (stub)
+    if (m_showNetworkSettings) {
+        ImGui::Text("Network settings panel (not implemented)");
+        ImGui::Separator();
+    }
+
+    // Current network info
+    std::string networkName = m_networkManager.GetCurrentNetworkName();
+    bool wifiEnabled = m_networkManager.IsWifiEnabled();
+    float downloadSpeed = m_networkManager.GetDownloadSpeed();
+    float uploadSpeed = m_networkManager.GetUploadSpeed();
+
+    ImGui::Text("Current Network: %s", networkName.c_str());
+    ImGui::Text("WiFi: %s", wifiEnabled ? "Enabled" : "Disabled");
+    ImGui::Text("Download: %.2f MB/s", downloadSpeed);
+    ImGui::Text("Upload: %.2f MB/s", uploadSpeed);
+
+    ImGui::Spacing();
+
+    // Refresh networks button
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
+    if (ImGui::Button("↻ Refresh Networks", ImVec2(160, 0))) {
+        m_networkManager.ScanNetworks();
+    }
+    ImGui::PopStyleColor(2);
+
+    ImGui::Separator();
+
+    // List available networks with WiFi symbols and connect option
+    static int selectedNetwork = -1;
+    static char password[128] = "";
+    static std::string connectStatus = "";
+
+    const auto& networks = m_networkManager.GetAvailableNetworks();
+    ImGui::Text("Available Networks:");
+    ImGui::BeginChild("##NetworkList", ImVec2(0, ImGui::GetWindowHeight() - 250), true);
+
+    int idx = 0;
+    for (const auto& net : networks) {
+        // Parse signal strength from net.second (e.g., "80% Signal")
+        int signal = 0;
+        sscanf(net.second.c_str(), "%d", &signal);
+
+        // Choose WiFi symbol based on signal
+        const char* wifiIcon = "🛑";
+        if (signal > 75) wifiIcon = "📶";         // Full
+        else if (signal > 50) wifiIcon = "📶";    // 3 bars
+        else if (signal > 25) wifiIcon = "📶";    // 2 bars
+        else if (signal > 0)  wifiIcon = "📶";    // 1 bar
+
+        bool isSelected = (selectedNetwork == idx);
+        if (ImGui::Selectable((std::string(wifiIcon) + " " + net.first).c_str(), isSelected)) {
+            selectedNetwork = idx;
+            connectStatus.clear();
+        }
+        idx++;
+    }
+    ImGui::EndChild();
+
+    // Show connect UI if a network is selected
+    if (selectedNetwork >= 0 && selectedNetwork < (int)networks.size()) {
+        ImGui::Separator();
+        ImGui::Text("Connect to: %s", networks[selectedNetwork].first.c_str());
+        ImGui::InputText("Password", password, sizeof(password), ImGuiInputTextFlags_Password);
+
+        if (ImGui::Button("Connect")) {
+            // Call your connect method (see below)
+            bool ok = m_networkManager.ConnectToNetwork(networks[selectedNetwork].first, password);
+            connectStatus = ok ? "Connected!" : "Failed to connect.";
+        }
+        if (!connectStatus.empty()) {
+            ImGui::Text("%s", connectStatus.c_str());
+        }
+    }
+
+    ImGui::End();
+
+    // Mouse-inside logic for overlay click handling
+    bool mouseInside = (io.MousePos.x >= m_networkWindowPos.x &&
+                        io.MousePos.x <= m_networkWindowPos.x + windowSize.x &&
+                        io.MousePos.y >= m_networkWindowPos.y &&
+                        io.MousePos.y <= m_networkWindowPos.y + windowSize.y);
+    m_mouseInsideNetworkWindow = mouseInside;
 }

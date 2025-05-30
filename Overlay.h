@@ -120,4 +120,6 @@ private:
     // Manager instances
     AudioManager m_audioManager;
     NetworkManager m_networkManager;
+
+    ImFont* m_emojiFont = nullptr;
 };
