@@ -10,6 +10,7 @@
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
+#include <shlobj.h>
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "d3d11.lib")
@@ -17,10 +18,6 @@
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "Ole32.lib")
-
-// Define the property key manually for MinGW compatibility
-static const PROPERTYKEY PKEY_Device_FriendlyName_Custom = 
-{ { 0xa45c254e, 0xdf1c, 0x4efd, { 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0 } }, 14 };
 
 // Global variables for the keyboard hook
 HHOOK g_keyboardHook = NULL;
@@ -138,33 +135,32 @@ Overlay::Overlay() :
     m_mainRenderTargetView(nullptr), 
     m_isRunning(false), 
     m_isVisible(false),
-    m_lastInBytes(0), 
-    m_lastOutBytes(0), 
-    m_lastTickCount(0), 
-    m_downloadSpeed(0.0f), 
-    m_uploadSpeed(0.0f),
     m_cpuQuery(NULL), 
     m_cpuTotal(NULL), 
     m_pdh_initialized(false), 
     m_smoothedCpuUsage(0),
     m_showSettings(false),
-    m_pEnumerator(nullptr),
-    m_pDevice(nullptr),
-    m_pEndpointVolume(nullptr),
-    m_selectedAudioDevice(0),
     m_showAudioWindow(false),
     m_showNetworkWindow(false),
-    m_scanningNetworks(false),
-    m_isWifiEnabled(true)
+    m_showAudioSettings(false),
+    m_showNetworkSettings(false),
+    m_mouseInsideAudioWindow(false),
+    m_mouseInsideNetworkWindow(false)
 {
+    // Initialize default settings
+    m_settings.audioSettings.showVolumePercentage = true;
+    m_settings.audioSettings.showDeviceSelector = true;
+    m_settings.audioSettings.alwaysOnTop = false;
+    m_settings.audioSettings.savePosition = true;
+    
+    m_settings.networkSettings.showNetworkDetails = true;
+    m_settings.networkSettings.alwaysOnTop = false;
+    m_settings.networkSettings.savePosition = true;
+    
     // Initialize PDH
     InitializeCpuCounter();
     
-    // Initialize audio
-    InitializeAudio();
-    
-    // Initialize network information
-    m_currentNetwork = GetCurrentNetworkName();
+    // AudioManager and NetworkManager are automatically initialized by their constructors
 }
 
 Overlay::~Overlay()
@@ -604,79 +600,6 @@ void Overlay::RenderSettingsPanel()
     ImGui::PopStyleColor();
 }
 
-void Overlay::RenderAudioPanel()
-{
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 0.9f));
-    
-    // Make the audio panel have a distinct look
-    ImGui::BeginChild("AudioPanel", ImVec2(ImGui::GetWindowWidth() * 0.9f, 170), true);
-    
-    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "AUDIO CONTROL PANEL");
-    ImGui::Separator();
-    
-    // Volume controls
-    float volume = GetMasterVolume();
-    bool muted = IsMasterMuted();
-    
-    // Large mute button with icon
-    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use the larger font
-    if (ImGui::Button(muted ? "🔇 MUTED" : "🔊 UNMUTED", ImVec2(150, 30)))
-    {
-        SetMasterMuted(!muted);
-    }
-    ImGui::PopFont();
-    
-    ImGui::SameLine();
-    
-    // Display current volume percentage
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 60);
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5);
-    ImGui::Text("%d%%", static_cast<int>(volume * 100));
-    
-    // Volume slider - bigger and with better visual
-    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(0.2f, 0.7f, 0.9f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(0.3f, 0.8f, 1.0f, 1.0f));
-    ImGui::SetNextItemWidth(ImGui::GetWindowWidth() - 30);
-    
-    if (ImGui::SliderFloat("##Volume", &volume, 0.0f, 1.0f, ""))
-    {
-        SetMasterVolume(volume);
-    }
-    ImGui::PopStyleColor(2);
-    
-    ImGui::Spacing();
-    
-    // Audio device selection with a more visible header
-    ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.5f, 1.0f), "Output Device:");
-    
-    // Device dropdown with full width
-    ImGui::SetNextItemWidth(ImGui::GetWindowWidth() - 70);
-    if (ImGui::BeginCombo("##AudioDevice", m_audioDevices[m_selectedAudioDevice].first.c_str()))
-    {
-        for (int i = 0; i < m_audioDevices.size(); i++)
-        {
-            bool is_selected = (m_selectedAudioDevice == i);
-            if (ImGui::Selectable(m_audioDevices[i].first.c_str(), is_selected))
-            {
-                SetAudioDevice(i);
-            }
-            if (is_selected)
-                ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
-    
-    // Refresh button
-    ImGui::SameLine();
-    if (ImGui::Button("↻ Refresh", ImVec2(65, 25)))
-    {
-        RefreshAudioDevices();
-    }
-    
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-}
-
 // Add this function to implement the audio settings panel
 
 void Overlay::RenderAudioSettingsPanel()
@@ -725,9 +648,6 @@ void Overlay::Cleanup()
         PdhCloseQuery(m_cpuQuery);
         m_pdh_initialized = false;
     }
-    
-    // Cleanup audio resources
-    CleanupAudio();
     
     // Unhook keyboard hook
     if (g_keyboardHook)
@@ -1001,87 +921,9 @@ int Overlay::GetCPUTemperature()
 
 MEMORYSTATUSEX Overlay::GetMemoryInfo()
 {
-    MEMORYSTATUSEX memInfo;
-    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
+    MEMORYSTATUSEX memInfo = GetMemoryStatusEx(); // Use the helper function
     GlobalMemoryStatusEx(&memInfo);
     return memInfo;
-}
-
-float Overlay::GetNetworkDownloadSpeed()
-{
-    UpdateNetworkSpeeds();
-    return m_downloadSpeed;
-}
-
-float Overlay::GetNetworkUploadSpeed()
-{
-    UpdateNetworkSpeeds();
-    return m_uploadSpeed;
-}
-
-void Overlay::UpdateNetworkSpeeds()
-{
-    // Don't update too frequently
-    DWORD currentTickCount = GetTickCount();
-    if (m_lastTickCount != 0 && currentTickCount - m_lastTickCount < 1000)
-    {
-        return; // Only update once per second
-    }
-    
-    // Get adapter info
-    ULONG bufferSize = 0;
-    GetIfTable(NULL, &bufferSize, FALSE);
-    
-    std::vector<BYTE> buffer(bufferSize);
-    PMIB_IFTABLE ifTable = reinterpret_cast<PMIB_IFTABLE>(buffer.data());
-    
-    if (GetIfTable(ifTable, &bufferSize, FALSE) != NO_ERROR)
-    {
-        return;
-    }
-    
-    // Sum up all bytes in/out across all network interfaces
-    ULONG64 totalInBytes = 0;
-    ULONG64 totalOutBytes = 0;
-    
-    for (DWORD i = 0; i < ifTable->dwNumEntries; i++)
-    {
-        MIB_IFROW& row = ifTable->table[i];
-        
-        // Skip interfaces with no traffic or loopback
-        if (row.dwType != IF_TYPE_SOFTWARE_LOOPBACK &&
-            (row.dwOperStatus == IF_OPER_STATUS_OPERATIONAL || 
-             row.dwOperStatus == IF_OPER_STATUS_CONNECTED))
-        {
-            totalInBytes += row.dwInOctets;
-            totalOutBytes += row.dwOutOctets;
-        }
-    }
-    
-    // Calculate speeds
-    if (m_lastTickCount > 0)
-    {
-        float timeDelta = (currentTickCount - m_lastTickCount) / 1000.0f; // Convert to seconds
-        
-        if (timeDelta > 0)
-        {
-            // Calculate speeds in MB/s
-            float inDelta = static_cast<float>(totalInBytes - m_lastInBytes);
-            float outDelta = static_cast<float>(totalOutBytes - m_lastOutBytes);
-            
-            m_downloadSpeed = (inDelta / (1024 * 1024)) / timeDelta;
-            m_uploadSpeed = (outDelta / (1024 * 1024)) / timeDelta;
-            
-            // Handle edge cases (like counter rollover)
-            if (m_downloadSpeed < 0) m_downloadSpeed = 0;
-            if (m_uploadSpeed < 0) m_uploadSpeed = 0;
-        }
-    }
-    
-    // Store current values for next calculation
-    m_lastInBytes = totalInBytes;
-    m_lastOutBytes = totalOutBytes;
-    m_lastTickCount = currentTickCount;
 }
 
 bool Overlay::IsClickedInFlowLauncher()
@@ -1193,6 +1035,25 @@ void Overlay::ToggleAudioWindow()
         ImGuiIO& io = ImGui::GetIO();
         ImVec2 mainWinPos = ImGui::GetWindowPos();
         m_audioWindowPos = ImVec2(mainWinPos.x + 50, mainWinPos.y + 50);
+        
+        // Make sure we have updated device information
+        m_audioManager.RefreshDevices();
+    }
+}
+
+void Overlay::ToggleNetworkWindow()
+{
+    m_showNetworkWindow = !m_showNetworkWindow;
+    
+    // If showing for the first time, position it near the system info window
+    if (m_showNetworkWindow && m_isVisible)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        
+        // Position it differently than the audio window to avoid overlap
+        // Use a different offset to make it appear in a different position
+        ImVec2 mainWinPos = ImGui::GetWindowPos();
+        m_networkWindowPos = ImVec2(mainWinPos.x + 100, mainWinPos.y + 100);
     }
 }
 
@@ -1269,8 +1130,8 @@ void Overlay::RenderAudioWindow()
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
     
     // Get current volume and mute state
-    float volume = GetMasterVolume();
-    bool muted = IsMasterMuted();
+    float volume = m_audioManager.GetMasterVolume();
+    bool muted = m_audioManager.IsMasterMuted();
     
     // Volume display (optional based on settings)
     if (m_settings.audioSettings.showVolumePercentage)
@@ -1284,7 +1145,7 @@ void Overlay::RenderAudioWindow()
     
     if (ImGui::Button(muted ? "🔇 MUTED" : "🔊 UNMUTED", ImVec2(ImGui::GetWindowWidth() * 0.9f, 40)))
     {
-        SetMasterMuted(!muted);
+        m_audioManager.SetMasterMuted(!muted);
     }
     ImGui::PopStyleColor(2);
     
@@ -1299,7 +1160,7 @@ void Overlay::RenderAudioWindow()
     ImGui::SetNextItemWidth(ImGui::GetWindowWidth() * 0.9f);
     if (ImGui::SliderFloat("##Volume", &volume, 0.0f, 1.0f, ""))
     {
-        SetMasterVolume(volume);
+        m_audioManager.SetMasterVolume(volume);
     }
     ImGui::PopStyleColor(3);
     
@@ -1318,16 +1179,20 @@ void Overlay::RenderAudioWindow()
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.2f, 0.2f, 0.2f, 0.98f));
         
+        // Get the devices list and selected device from the manager
+        const auto& devices = m_audioManager.GetDevices();
+        int selectedDevice = m_audioManager.GetSelectedDeviceIndex();
+        
         // Device dropdown with description
         ImGui::SetNextItemWidth(ImGui::GetWindowWidth() * 0.9f);
-        if (ImGui::BeginCombo("##AudioDevice", m_audioDevices[m_selectedAudioDevice].first.c_str()))
+        if (ImGui::BeginCombo("##AudioDevice", devices[selectedDevice].first.c_str()))
         {
-            for (int i = 0; i < m_audioDevices.size(); i++)
+            for (int i = 0; i < devices.size(); i++)
             {
-                bool is_selected = (m_selectedAudioDevice == i);
-                if (ImGui::Selectable(m_audioDevices[i].first.c_str(), is_selected))
+                bool is_selected = (selectedDevice == i);
+                if (ImGui::Selectable(devices[i].first.c_str(), is_selected))
                 {
-                    SetAudioDevice(i);
+                    m_audioManager.SetDevice(i);
                 }
                 if (is_selected)
                     ImGui::SetItemDefaultFocus();
@@ -1344,7 +1209,7 @@ void Overlay::RenderAudioWindow()
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
         if (ImGui::Button("↻ Refresh Devices", ImVec2(120, 30)))
         {
-            RefreshAudioDevices();
+            m_audioManager.RefreshDevices();
         }
         ImGui::PopStyleColor(2);
     }
@@ -1360,406 +1225,6 @@ void Overlay::RenderAudioWindow()
                          
     // Store this value to be accessed from RenderOverlay
     m_mouseInsideAudioWindow = mouseInsideAudio;
-}
-
-// Audio initialization function
-void Overlay::InitializeAudio()
-{
-    // Initialize COM if not already initialized
-    HRESULT hr = CoInitialize(nullptr);
-    bool needsUninitialize = SUCCEEDED(hr);
-    
-    // Create device enumerator
-    hr = CoCreateInstance(
-        __uuidof(MMDeviceEnumerator),
-        nullptr,
-        CLSCTX_ALL,
-        __uuidof(IMMDeviceEnumerator),
-        (void**)&m_pEnumerator
-    );
-    
-    if (SUCCEEDED(hr))
-    {
-        RefreshAudioDevices();
-        // Set to default device initially
-        SetAudioDevice(0);
-    }
-    
-    if (needsUninitialize)
-    {
-        CoUninitialize();
-    }
-}
-
-void Overlay::CleanupAudio()
-{
-    if (m_pEndpointVolume)
-    {
-        m_pEndpointVolume->Release();
-        m_pEndpointVolume = nullptr;
-    }
-    
-    if (m_pDevice)
-    {
-        m_pDevice->Release();
-        m_pDevice = nullptr;
-    }
-    
-    if (m_pEnumerator)
-    {
-        m_pEnumerator->Release();
-        m_pEnumerator = nullptr;
-    }
-}
-
-void Overlay::RefreshAudioDevices()
-{
-    m_audioDevices.clear();
-    
-    // Initialize COM for this thread if needed
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
-    
-    if (!m_pEnumerator) 
-    {
-        // Try to create the enumerator if it doesn't exist
-        hr = CoCreateInstance(
-            __uuidof(MMDeviceEnumerator),
-            nullptr,
-            CLSCTX_ALL,
-            __uuidof(IMMDeviceEnumerator),
-            (void**)&m_pEnumerator
-        );
-        
-        if (FAILED(hr))
-        {
-            if (needsUninitialize) CoUninitialize();
-            return;
-        }
-    }
-    
-    // Add the default device at index 0
-    m_audioDevices.push_back(std::make_pair("Default Device", ""));
-    
-    // Enumerate all audio rendering devices
-    IMMDeviceCollection* pCollection = nullptr;
-    hr = m_pEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &pCollection);
-    
-    if (SUCCEEDED(hr))
-    {
-        UINT count;
-        hr = pCollection->GetCount(&count);
-        
-        if (SUCCEEDED(hr))
-        {
-            for (UINT i = 0; i < count; i++)
-            {
-                IMMDevice* pDevice = nullptr;
-                hr = pCollection->Item(i, &pDevice);
-                
-                if (SUCCEEDED(hr))
-                {
-                    LPWSTR pwszID = nullptr;
-                    hr = pDevice->GetId(&pwszID);
-                    
-                    if (SUCCEEDED(hr))
-                    {
-                        // Convert LPWSTR to std::string
-                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pwszID, -1, nullptr, 0, nullptr, nullptr);
-                        std::string deviceId(size_needed, 0);
-                        WideCharToMultiByte(CP_UTF8, 0, pwszID, -1, &deviceId[0], size_needed, nullptr, nullptr);
-                        
-                        // Get device friendly name
-                        IPropertyStore* pProps = nullptr;
-                        hr = pDevice->OpenPropertyStore(STGM_READ, &pProps);
-                        
-                        if (SUCCEEDED(hr))
-                        {
-                            PROPVARIANT varName;
-                            PropVariantInit(&varName);
-                            
-                            hr = pProps->GetValue(PKEY_Device_FriendlyName_Custom, &varName);
-                            
-                            if (SUCCEEDED(hr))
-                            {
-                                // Convert LPWSTR to std::string
-                                int name_size = WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, nullptr, 0, nullptr, nullptr);
-                                std::string deviceName(name_size, 0);
-                                WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, &deviceName[0], name_size, nullptr, nullptr);
-                                
-                                m_audioDevices.push_back(std::make_pair(deviceName, deviceId));
-                                
-                                PropVariantClear(&varName);
-                            }
-                            
-                            pProps->Release();
-                        }
-                        
-                        CoTaskMemFree(pwszID);
-                    }
-                    
-                    pDevice->Release();
-                }
-            }
-        }
-        
-        pCollection->Release();
-    }
-    
-    if (needsUninitialize)
-    {
-        CoUninitialize();
-    }
-}
-
-void Overlay::SetAudioDevice(int deviceIndex)
-{
-    // Initialize COM for this thread if needed
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
-    
-    // Clean up previous device and endpoint
-    if (m_pEndpointVolume)
-    {
-        m_pEndpointVolume->Release();
-        m_pEndpointVolume = nullptr;
-    }
-    
-    if (m_pDevice)
-    {
-        m_pDevice->Release();
-        m_pDevice = nullptr;
-    }
-    
-    // Safety check for enumerator
-    if (!m_pEnumerator)
-    {
-        // Try to create the enumerator if it doesn't exist
-        hr = CoCreateInstance(
-            __uuidof(MMDeviceEnumerator),
-            nullptr,
-            CLSCTX_ALL,
-            __uuidof(IMMDeviceEnumerator),
-            (void**)&m_pEnumerator
-        );
-        
-        if (FAILED(hr))
-        {
-            if (needsUninitialize) CoUninitialize();
-            return;
-        }
-    }
-    
-    // Safety check for device index and audio devices vector
-    if (deviceIndex < 0 || m_audioDevices.empty() || deviceIndex >= static_cast<int>(m_audioDevices.size()))
-    {
-        if (m_audioDevices.empty())
-        {
-            RefreshAudioDevices();
-            // If still empty, just exit
-            if (m_audioDevices.empty())
-            {
-                if (needsUninitialize) CoUninitialize();
-                return;
-            }
-        }
-        
-        // Use default device (index 0) if requested index is invalid
-        deviceIndex = 0;
-    }
-    
-    m_selectedAudioDevice = deviceIndex;
-    
-    // If default device (index 0), get the default device
-    if (deviceIndex == 0)
-    {
-        hr = m_pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &m_pDevice);
-    }
-    else
-    {
-        // Get device by ID
-        const std::string& deviceId = m_audioDevices[deviceIndex].second;
-        
-        // Convert std::string to LPWSTR
-        int size_needed = MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, nullptr, 0);
-        std::wstring wDeviceId(size_needed, 0);
-        MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, &wDeviceId[0], size_needed);
-        
-        hr = m_pEnumerator->GetDevice(wDeviceId.c_str(), &m_pDevice);
-    }
-    
-    if (SUCCEEDED(hr) && m_pDevice)
-    {
-        hr = m_pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, (void**)&m_pEndpointVolume);
-    }
-    
-    if (needsUninitialize)
-    {
-        CoUninitialize();
-    }
-}
-
-float Overlay::GetMasterVolume()
-{
-    float level = 0.0f;
-    
-    // Initialize COM for this thread if needed
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
-    
-    if (m_pEndpointVolume)
-    {
-        hr = m_pEndpointVolume->GetMasterVolumeLevelScalar(&level);
-        if (FAILED(hr))
-        {
-            // If getting volume fails, try refreshing the audio device
-            SetAudioDevice(m_selectedAudioDevice);
-            if (m_pEndpointVolume)
-            {
-                m_pEndpointVolume->GetMasterVolumeLevelScalar(&level);
-            }
-        }
-    }
-    
-    if (needsUninitialize)
-    {
-        CoUninitialize();
-    }
-    
-    return level;
-}
-
-void Overlay::SetMasterVolume(float volume)
-{
-    // Initialize COM for this thread if needed
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
-    
-    if (m_pEndpointVolume)
-    {
-        // Make sure volume is in the valid range
-        volume = (volume < 0.0f) ? 0.0f : (volume > 1.0f) ? 1.0f : volume;
-        
-        hr = m_pEndpointVolume->SetMasterVolumeLevelScalar(volume, nullptr);
-        if (FAILED(hr))
-        {
-            // If setting volume fails, try refreshing the audio device
-            SetAudioDevice(m_selectedAudioDevice);
-            if (m_pEndpointVolume)
-            {
-                m_pEndpointVolume->SetMasterVolumeLevelScalar(volume, nullptr);
-            }
-        }
-    }
-    
-    if (needsUninitialize)
-    {
-        CoUninitialize();
-    }
-}
-
-bool Overlay::IsMasterMuted()
-{
-    BOOL muted = FALSE;
-    
-    // Initialize COM for this thread if needed
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
-    
-    if (m_pEndpointVolume)
-    {
-        hr = m_pEndpointVolume->GetMute(&muted);
-        if (FAILED(hr))
-        {
-            // If getting mute state fails, try refreshing the audio device
-            SetAudioDevice(m_selectedAudioDevice);
-            if (m_pEndpointVolume)
-            {
-                m_pEndpointVolume->GetMute(&muted);
-            }
-        }
-    }
-    
-    if (needsUninitialize)
-    {
-        CoUninitialize();
-    }
-    
-    return muted != FALSE;
-}
-
-void Overlay::SetMasterMuted(bool muted)
-{
-    // Initialize COM for this thread if needed
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool needsUninitialize = SUCCEEDED(hr) && hr != S_FALSE;
-    
-    if (m_pEndpointVolume)
-    {
-        hr = m_pEndpointVolume->SetMute(muted, nullptr);
-        if (FAILED(hr))
-        {
-            // If setting mute fails, try refreshing the audio device
-            SetAudioDevice(m_selectedAudioDevice);
-            if (m_pEndpointVolume)
-            {
-                m_pEndpointVolume->SetMute(muted, nullptr);
-            }
-        }
-    }
-    
-    if (needsUninitialize)
-    {
-        CoUninitialize();
-    }
-}
-
-bool Overlay::GetBatteryStatus(int& batteryPercent, bool& isCharging, int& remainingMinutes)
-{
-    SYSTEM_POWER_STATUS powerStatus;
-    if (GetSystemPowerStatus(&powerStatus))
-    {
-        // Get battery percentage
-        if (powerStatus.BatteryLifePercent <= 100)
-            batteryPercent = powerStatus.BatteryLifePercent;
-        else
-            batteryPercent = 0; // Unknown
-
-        // Check if it's charging
-        isCharging = (powerStatus.ACLineStatus == 1);
-        
-        // Get remaining minutes
-        if (powerStatus.BatteryLifeTime != BATTERY_LIFE_UNKNOWN)
-            remainingMinutes = powerStatus.BatteryLifeTime / 60; // Convert from seconds to minutes
-        else
-            remainingMinutes = -1; // Unknown
-        
-        return true;
-    }
-    
-    return false;
-}
-
-// Add these functions to the end of your file
-
-void Overlay::ToggleNetworkWindow()
-{
-    m_showNetworkWindow = !m_showNetworkWindow;
-    
-    // If showing for the first time, position it near the system info window
-    if (m_showNetworkWindow && m_isVisible)
-    {
-        ImGuiIO& io = ImGui::GetIO();
-        // Position it differently than audio window to avoid overlap
-        m_networkWindowPos = ImVec2(io.DisplaySize.x * 0.6f, io.DisplaySize.y * 0.3f);
-    }
-    
-    // Update current network info when opening
-    if (m_showNetworkWindow)
-    {
-        m_currentNetwork = GetCurrentNetworkName();
-        m_isWifiEnabled = IsWifiEnabled();
-    }
 }
 
 void Overlay::RenderNetworkWindow()
@@ -1835,14 +1300,14 @@ void Overlay::RenderNetworkWindow()
     ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
     
     // WiFi On/Off button with status
-    ImGui::PushStyleColor(ImGuiCol_Button, m_isWifiEnabled ? ImVec4(0.1f, 0.6f, 0.1f, 1.0f) : ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, m_isWifiEnabled ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+    bool wifiEnabled = m_networkManager.IsWifiEnabled();
+    ImGui::PushStyleColor(ImGuiCol_Button, wifiEnabled ? ImVec4(0.1f, 0.6f, 0.1f, 1.0f) : ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, wifiEnabled ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
     
-    if (ImGui::Button(m_isWifiEnabled ? "WiFi: ON" : "WiFi: OFF", ImVec2(ImGui::GetWindowWidth() * 0.9f, 40)))
+    if (ImGui::Button(wifiEnabled ? "WiFi: ON" : "WiFi: OFF", ImVec2(ImGui::GetWindowWidth() * 0.9f, 40)))
     {
-        // Toggle WiFi state
-        ToggleWifi(!m_isWifiEnabled);
-        m_isWifiEnabled = !m_isWifiEnabled;
+        // Toggle WiFi state using the manager
+        m_networkManager.ToggleWifi(!wifiEnabled);
     }
     ImGui::PopStyleColor(2);
     
@@ -1853,12 +1318,12 @@ void Overlay::RenderNetworkWindow()
     
     ImGui::BeginChild("ConnectionInfo", ImVec2(ImGui::GetWindowWidth() * 0.9f, 70), true);
     
-    ImGui::Text("Network: %s", m_currentNetwork.c_str());
+    ImGui::Text("Network: %s", m_networkManager.GetCurrentNetworkName().c_str());
     ImGui::Separator();
     
-    // Network speeds using existing functions
-    ImGui::Text("Download: %.2f MB/s", GetNetworkDownloadSpeed());
-    ImGui::Text("Upload: %.2f MB/s", GetNetworkUploadSpeed());
+    // Network speeds using the manager
+    ImGui::Text("Download: %.2f MB/s", m_networkManager.GetDownloadSpeed());
+    ImGui::Text("Upload: %.2f MB/s", m_networkManager.GetUploadSpeed());
     
     ImGui::EndChild();
     
@@ -1873,7 +1338,7 @@ void Overlay::RenderNetworkWindow()
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.5f, 0.7f, 1.0f));
         
-        if (m_scanningNetworks)
+        if (m_networkManager.IsScanning())
         {
             ImGui::BeginDisabled(true);
             ImGui::Button("Scanning...", ImVec2(120, 30));
@@ -1883,9 +1348,7 @@ void Overlay::RenderNetworkWindow()
         {
             if (ImGui::Button("Scan Networks", ImVec2(120, 30)))
             {
-                m_scanningNetworks = true;
-                ScanNetworks();
-                m_scanningNetworks = false;
+                m_networkManager.ScanNetworks();
             }
         }
         ImGui::PopStyleColor(2);
@@ -1893,15 +1356,17 @@ void Overlay::RenderNetworkWindow()
         // List of available networks
         ImGui::BeginChild("AvailableNetworks", ImVec2(ImGui::GetWindowWidth() * 0.9f, 120), true);
         
-        if (m_availableNetworks.empty())
+        const auto& availableNetworks = m_networkManager.GetAvailableNetworks();
+        if (availableNetworks.empty())
         {
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No networks found or scan not performed");
         }
         else
         {
-            for (const auto& network : m_availableNetworks)
+            std::string currentNetwork = m_networkManager.GetCurrentNetworkName();
+            for (const auto& network : availableNetworks)
             {
-                bool isCurrentNetwork = (network.first == m_currentNetwork);
+                bool isCurrentNetwork = (network.first == currentNetwork);
                 
                 if (isCurrentNetwork)
                 {
@@ -1974,75 +1439,29 @@ void Overlay::RenderNetworkSettingsPanel()
     ImGui::PopStyleColor();
 }
 
-// Implementation of network-related functions
-
-void Overlay::ScanNetworks()
+// Add this function to get battery status
+bool Overlay::GetBatteryStatus(int& batteryPercent, bool& isCharging, int& remainingMinutes)
 {
-    // Clear existing networks
-    m_availableNetworks.clear();
-    
-    // This is a placeholder implementation using WlanEnumInterfaces
-    // For a real implementation, you'd use the Native Wifi API (wlanapi.h)
-    
-    // In this demo, we'll add some sample networks
-    m_availableNetworks.push_back(std::make_pair(m_currentNetwork, "Current")); // Current network
-    m_availableNetworks.push_back(std::make_pair("Home Network", "00:11:22:33:44:55"));
-    m_availableNetworks.push_back(std::make_pair("Guest Network", "AA:BB:CC:DD:EE:FF"));
-    m_availableNetworks.push_back(std::make_pair("Neighbor's WiFi", "FF:EE:DD:CC:BB:AA"));
-    
-    // For a real implementation, you would:
-    // 1. Use WlanEnumInterfaces to get all wireless interfaces
-    // 2. For each interface, use WlanScan to refresh the list
-    // 3. Use WlanGetAvailableNetworkList to get available networks
-    // 4. Parse and store the results in m_availableNetworks
-    
-    // Sleep to simulate scanning process
-    Sleep(1000);
-}
-
-void Overlay::ToggleWifi(bool enable)
-{
-    // This is a placeholder implementation
-    // For a real implementation, you can use:
-    // 1. DeviceIoControl with the appropriate control codes
-    // 2. WlanConnect/WlanDisconnect from the Native Wifi API
-    // 3. Or call netsh through a system command
-    
-    // Simulating WiFi toggle
-    m_isWifiEnabled = enable;
-    
-    // If WiFi is disabled, clear current network
-    if (!enable)
+    SYSTEM_POWER_STATUS powerStatus;
+    if (GetSystemPowerStatus(&powerStatus))
     {
-        m_currentNetwork = "Not Connected";
-    }
-    else
-    {
-        // When enabled, set to default network after a delay
-        Sleep(1000);
-        m_currentNetwork = GetCurrentNetworkName();
-    }
-}
+        // Get battery percentage
+        if (powerStatus.BatteryLifePercent <= 100)
+            batteryPercent = powerStatus.BatteryLifePercent;
+        else
+            batteryPercent = 0; // Unknown
 
-std::string Overlay::GetCurrentNetworkName()
-{
-    // This is a placeholder implementation
-    // For a real implementation, you would use:
-    // 1. WlanQueryInterface to get the current connection info
-    // 2. Parse the WLAN_CONNECTION_ATTRIBUTES to get the profile name
+        // Check if it's charging
+        isCharging = (powerStatus.ACLineStatus == 1);
+        
+        // Get remaining minutes
+        if (powerStatus.BatteryLifeTime != BATTERY_LIFE_UNKNOWN)
+            remainingMinutes = powerStatus.BatteryLifeTime / 60; // Convert from seconds to minutes
+        else
+            remainingMinutes = -1; // Unknown
+        
+        return true;
+    }
     
-    // With IP Helper API:
-    // GetAdaptersInfo or GetAdaptersAddresses
-    
-    // For now, let's return a fake network name
-    return m_isWifiEnabled ? "Home Network" : "Not Connected";
-}
-
-bool Overlay::IsWifiEnabled()
-{
-    // This is a placeholder implementation
-    // For a real implementation, you'd check the network adapter status
-    // using GetAdaptersInfo or WlanQueryInterface
-    
-    return m_isWifiEnabled;
+    return false;
 }

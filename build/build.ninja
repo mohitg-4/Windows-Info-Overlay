@@ -58,6 +58,20 @@ build CMakeFiles/WindowsInfoOverlay.dir/Overlay.cpp.obj: CXX_COMPILER__WindowsIn
   OBJECT_DIR = CMakeFiles\WindowsInfoOverlay.dir
   OBJECT_FILE_DIR = CMakeFiles\WindowsInfoOverlay.dir
 
+build CMakeFiles/WindowsInfoOverlay.dir/AudioManager.cpp.obj: CXX_COMPILER__WindowsInfoOverlay_unscanned_ C$:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/AudioManager.cpp || cmake_object_order_depends_target_WindowsInfoOverlay
+  DEP_FILE = CMakeFiles\WindowsInfoOverlay.dir\AudioManager.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IC:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/imgui
+  OBJECT_DIR = CMakeFiles\WindowsInfoOverlay.dir
+  OBJECT_FILE_DIR = CMakeFiles\WindowsInfoOverlay.dir
+
+build CMakeFiles/WindowsInfoOverlay.dir/NetworkManager.cpp.obj: CXX_COMPILER__WindowsInfoOverlay_unscanned_ C$:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/NetworkManager.cpp || cmake_object_order_depends_target_WindowsInfoOverlay
+  DEP_FILE = CMakeFiles\WindowsInfoOverlay.dir\NetworkManager.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IC:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/imgui
+  OBJECT_DIR = CMakeFiles\WindowsInfoOverlay.dir
+  OBJECT_FILE_DIR = CMakeFiles\WindowsInfoOverlay.dir
+
 build CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui.cpp.obj: CXX_COMPILER__WindowsInfoOverlay_unscanned_ C$:/projectsforfun/WindowsInfoOverlay/Windows-Info-Overlay/imgui/imgui.cpp || cmake_object_order_depends_target_WindowsInfoOverlay
   DEP_FILE = CMakeFiles\WindowsInfoOverlay.dir\imgui\imgui.cpp.obj.d
   FLAGS = -std=gnu++17
@@ -115,9 +129,9 @@ build CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_widgets.cpp.obj: CXX_COMPILE
 #############################################
 # Link the executable WindowsInfoOverlay.exe
 
-build WindowsInfoOverlay.exe: CXX_EXECUTABLE_LINKER__WindowsInfoOverlay_ CMakeFiles/WindowsInfoOverlay.dir/main.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/Overlay.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_demo.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_draw.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_impl_dx11.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_impl_win32.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_tables.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_widgets.cpp.obj
+build WindowsInfoOverlay.exe: CXX_EXECUTABLE_LINKER__WindowsInfoOverlay_ CMakeFiles/WindowsInfoOverlay.dir/main.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/Overlay.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/AudioManager.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/NetworkManager.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_demo.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_draw.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_impl_dx11.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_impl_win32.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_tables.cpp.obj CMakeFiles/WindowsInfoOverlay.dir/imgui/imgui_widgets.cpp.obj
   LINK_FLAGS = -mwindows
-  LINK_LIBRARIES = -ld3d11  -ldwmapi  -ld3dcompiler  -liphlpapi  -lpdh  -lwbemuuid  -loleaut32  -lole32  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+  LINK_LIBRARIES = -ld3d11  -ldwmapi  -ld3dcompiler  -liphlpapi  -lpdh  -lwbemuuid  -loleaut32  -lole32  -lwlanapi  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = CMakeFiles\WindowsInfoOverlay.dir
   POST_BUILD = cd .
   PRE_LINK = cd .

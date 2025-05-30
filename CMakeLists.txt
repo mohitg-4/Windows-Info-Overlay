@@ -3,29 +3,41 @@ project(WindowsInfoOverlay)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Collect ImGui source files
-file(GLOB IMGUI_SOURCES "imgui/*.cpp")
-file(GLOB IMGUI_HEADERS "imgui/*.h")
-
-add_executable(WindowsInfoOverlay WIN32
-    main.cpp
+# Add source files
+set(SOURCES 
+    main.cpp 
     Overlay.cpp
-    Overlay.h
-    ${IMGUI_SOURCES}
-    ${IMGUI_HEADERS}
+    AudioManager.cpp  # Add these new files
+    NetworkManager.cpp
+    imgui/imgui.cpp 
+    imgui/imgui_demo.cpp 
+    imgui/imgui_draw.cpp 
+    imgui/imgui_impl_dx11.cpp 
+    imgui/imgui_impl_win32.cpp 
+    imgui/imgui_tables.cpp 
+    imgui/imgui_widgets.cpp
 )
 
-target_include_directories(WindowsInfoOverlay PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/imgui
-)
+# Add include directories
+include_directories(imgui)
 
-target_link_libraries(WindowsInfoOverlay PRIVATE
-    d3d11
-    dwmapi
-    d3dcompiler
-    iphlpapi
-    pdh
-    wbemuuid
-    oleaut32
+# Add executable
+add_executable(${PROJECT_NAME} ${SOURCES})
+
+# Add Windows libraries
+target_link_libraries(${PROJECT_NAME} 
+    d3d11 
+    dwmapi 
+    d3dcompiler 
+    iphlpapi 
+    pdh 
+    wbemuuid 
+    oleaut32 
     ole32
+    wlanapi
+)
+
+# Set Windows subsystem
+set_target_properties(${PROJECT_NAME} PROPERTIES 
+    WIN32_EXECUTABLE TRUE
 )
